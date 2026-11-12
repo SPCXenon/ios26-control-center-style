@@ -1,7 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
-#import <math.h>
 
 static BOOL IOS26CCIsTargetWindow(UIWindow *window) {
     if (!window) {
@@ -31,22 +30,17 @@ static UIVisualEffectView *IOS26CCGlassViewFor(UIView *view) {
     return glassView;
 }
 
-static CGFloat IOS26CCRadiusForView(UIView *view) {
+static CGFloat IOS26CCCardRadiusForView(UIView *view) {
     CGFloat width = CGRectGetWidth(view.bounds);
     CGFloat height = CGRectGetHeight(view.bounds);
-    if (width > 0.0 && height > 0.0 && fabs(width - height) < 4.0) {
-        return MIN(width, height) * 0.5;
-    }
-    return MIN(28.0, MIN(width, height) * 0.24);
+    return MIN(24.0, MIN(width, height) * 0.18);
 }
 
-static void IOS26CCApplyGlass(UIView *view, CGFloat tintAlpha, BOOL circular) {
+static void IOS26CCApplyGlass(UIView *view, CGFloat tintAlpha, CGFloat radius, BOOL drawsBorder) {
     if (CGRectGetWidth(view.bounds) <= 0.0 || CGRectGetHeight(view.bounds) <= 0.0) {
         return;
     }
 
-    CGFloat radius = circular ? MIN(CGRectGetWidth(view.bounds), CGRectGetHeight(view.bounds)) * 0.5
-                              : IOS26CCRadiusForView(view);
     UIVisualEffectView *glassView = IOS26CCGlassViewFor(view);
     glassView.layer.cornerRadius = radius;
     glassView.layer.cornerCurve = kCACornerCurveContinuous;
@@ -55,28 +49,33 @@ static void IOS26CCApplyGlass(UIView *view, CGFloat tintAlpha, BOOL circular) {
 
     view.layer.cornerRadius = radius;
     view.layer.cornerCurve = kCACornerCurveContinuous;
-    view.layer.borderWidth = 0.35;
-    view.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.15].CGColor;
+    view.layer.borderWidth = drawsBorder ? 0.25 : 0.0;
+    view.layer.borderColor = drawsBorder ? [UIColor colorWithWhite:1.0 alpha:0.12].CGColor : UIColor.clearColor.CGColor;
     view.opaque = NO;
 }
 
 static void IOS26CCStyleView(UIView *view) {
     NSString *className = NSStringFromClass(view.class);
 
-    if ([className isEqualToString:@"CCUIHeaderPocketView"] ||
-        [className isEqualToString:@"CCUIContentModuleBackgroundView"] ||
-        [className isEqualToString:@"CCUIControlTemplateView"] ||
-        [className isEqualToString:@"CCUIButtonModuleView"]) {
-        IOS26CCApplyGlass(view, 0.08, NO);
+    CGFloat minimumDimension = MIN(CGRectGetWidth(view.bounds), CGRectGetHeight(view.bounds));
+
+    if ([className isEqualToString:@"CCUIHeaderPocketView"]) {
+        CGFloat radius = MIN(20.0, CGRectGetHeight(view.bounds) * 0.16);
+        IOS26CCApplyGlass(view, 0.08, radius, YES);
+    } else if ([className isEqualToString:@"CCUIContentModuleBackgroundView"] ||
+               [className isEqualToString:@"CCUIButtonModuleView"]) {
+        IOS26CCApplyGlass(view, 0.08, IOS26CCCardRadiusForView(view), YES);
+    } else if ([className isEqualToString:@"CCUIControlTemplateView"]) {
+        // Templates often sit directly over a same-sized module background; keep their glass,
+        // but let the background view provide the single visible outline.
+        IOS26CCApplyGlass(view, 0.05, IOS26CCCardRadiusForView(view), NO);
     } else if ([className isEqualToString:@"CCUIAccessoryButton"] ||
                [className isEqualToString:@"CCUIPowerButton"] ||
                [className isEqualToString:@"CCUIRoundButton"]) {
-        IOS26CCApplyGlass(view, 0.12, YES);
+        IOS26CCApplyGlass(view, 0.12, minimumDimension * 0.5, YES);
     } else if ([className isEqualToString:@"CCUIContinuousSliderView"] ||
-               [className isEqualToString:@"CCUISteppedSliderView"] ||
-               [className isEqualToString:@"CCUIBaseSliderContentView"] ||
-               [className isEqualToString:@"_CCUIBaseSliderContentView"]) {
-        IOS26CCApplyGlass(view, 0.08, NO);
+               [className isEqualToString:@"CCUISteppedSliderView"]) {
+        IOS26CCApplyGlass(view, 0.08, minimumDimension * 0.5, YES);
     }
 }
 
