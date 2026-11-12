@@ -1,6 +1,6 @@
 Package: com.codex.ios26ccstyle
 Name: iOS 26 Control Center Style
-Version: 0.4.1
+Version: 0.4.2
 Architecture: iphoneos-arm64
 Description: Adds Liquid Glass-style materials to iOS 18 Control Center surfaces and controls.
 Maintainer: Codex

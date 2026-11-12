@@ -14,44 +14,88 @@ static BOOL IOS26CCIsTargetWindow(UIWindow *window) {
     return controlCenterWindowClass && [window isKindOfClass:controlCenterWindowClass];
 }
 
-static char kIOS26CCGlassViewKey;
-
-static UIVisualEffectView *IOS26CCGlassViewFor(UIView *view) {
-    UIVisualEffectView *glassView = objc_getAssociatedObject(view, &kIOS26CCGlassViewKey);
-    if (!glassView) {
-        UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark];
-        glassView = [[UIVisualEffectView alloc] initWithEffect:blur];
-        glassView.userInteractionEnabled = NO;
-        glassView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [view insertSubview:glassView atIndex:0];
-        objc_setAssociatedObject(view, &kIOS26CCGlassViewKey, glassView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    glassView.frame = view.bounds;
-    return glassView;
-}
+static char kIOS26CCSurfaceSheenKey;
+static char kIOS26CCSpecularRimKey;
 
 static CGFloat IOS26CCCardRadiusForView(UIView *view) {
     CGFloat width = CGRectGetWidth(view.bounds);
     CGFloat height = CGRectGetHeight(view.bounds);
-    return MIN(24.0, MIN(width, height) * 0.18);
+    return MIN(22.0, MIN(width, height) * 0.18);
 }
 
-static void IOS26CCApplyGlass(UIView *view, CGFloat tintAlpha, CGFloat radius, BOOL drawsBorder) {
+static CAGradientLayer *IOS26CCSurfaceSheenForView(UIView *view) {
+    CAGradientLayer *sheen = objc_getAssociatedObject(view, &kIOS26CCSurfaceSheenKey);
+    if (!sheen) {
+        sheen = [CAGradientLayer layer];
+        sheen.startPoint = CGPointMake(0.5, 0.0);
+        sheen.endPoint = CGPointMake(0.5, 1.0);
+        sheen.locations = @[@0.0, @0.52, @1.0];
+        sheen.colors = @[
+            (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.70].CGColor,
+            (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.10].CGColor,
+            (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.34].CGColor,
+        ];
+        [view.layer insertSublayer:sheen atIndex:0];
+        objc_setAssociatedObject(view, &kIOS26CCSurfaceSheenKey, sheen, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    } else if (sheen.superlayer != view.layer) {
+        [view.layer insertSublayer:sheen atIndex:0];
+    }
+
+    sheen.frame = view.bounds;
+    sheen.cornerRadius = view.layer.cornerRadius;
+    sheen.cornerCurve = kCACornerCurveContinuous;
+    sheen.masksToBounds = YES;
+    return sheen;
+}
+
+static CAGradientLayer *IOS26CCSpecularRimForView(UIView *view) {
+    CAGradientLayer *rim = objc_getAssociatedObject(view, &kIOS26CCSpecularRimKey);
+    if (!rim) {
+        rim = [CAGradientLayer layer];
+        rim.startPoint = CGPointMake(0.0, 0.0);
+        rim.endPoint = CGPointMake(1.0, 1.0);
+        rim.locations = @[@0.0, @0.20, @0.62, @1.0];
+        rim.colors = @[
+            (__bridge id)[UIColor colorWithWhite:1.0 alpha:1.0].CGColor,
+            (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.35].CGColor,
+            (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.12].CGColor,
+            (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.72].CGColor,
+        ];
+
+        CAShapeLayer *mask = [CAShapeLayer layer];
+        mask.fillColor = UIColor.clearColor.CGColor;
+        mask.strokeColor = UIColor.whiteColor.CGColor;
+        mask.lineWidth = 0.7;
+        mask.lineJoin = kCALineJoinRound;
+        rim.mask = mask;
+        [view.layer addSublayer:rim];
+        objc_setAssociatedObject(view, &kIOS26CCSpecularRimKey, rim, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    } else if (rim.superlayer != view.layer) {
+        [view.layer addSublayer:rim];
+    }
+
+    rim.frame = view.bounds;
+    return rim;
+}
+
+static void IOS26CCApplyGlass(UIView *view, CGFloat radius, CGFloat sheenOpacity, CGFloat rimOpacity) {
     if (CGRectGetWidth(view.bounds) <= 0.0 || CGRectGetHeight(view.bounds) <= 0.0) {
         return;
     }
 
-    UIVisualEffectView *glassView = IOS26CCGlassViewFor(view);
-    glassView.layer.cornerRadius = radius;
-    glassView.layer.cornerCurve = kCACornerCurveContinuous;
-    glassView.clipsToBounds = YES;
-    glassView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:tintAlpha];
-
     view.layer.cornerRadius = radius;
     view.layer.cornerCurve = kCACornerCurveContinuous;
-    view.layer.borderWidth = drawsBorder ? 0.25 : 0.0;
-    view.layer.borderColor = drawsBorder ? [UIColor colorWithWhite:1.0 alpha:0.12].CGColor : UIColor.clearColor.CGColor;
-    view.opaque = NO;
+
+    CAGradientLayer *sheen = IOS26CCSurfaceSheenForView(view);
+    sheen.opacity = sheenOpacity;
+
+    CAGradientLayer *rim = IOS26CCSpecularRimForView(view);
+    rim.opacity = rimOpacity;
+    CAShapeLayer *mask = (CAShapeLayer *)rim.mask;
+    mask.frame = rim.bounds;
+    CGRect rimBounds = CGRectInset(mask.bounds, 0.45, 0.45);
+    CGFloat rimRadius = MAX(0.0, radius - 0.45);
+    mask.path = [UIBezierPath bezierPathWithRoundedRect:rimBounds cornerRadius:rimRadius].CGPath;
 }
 
 static void IOS26CCStyleView(UIView *view) {
@@ -60,22 +104,18 @@ static void IOS26CCStyleView(UIView *view) {
     CGFloat minimumDimension = MIN(CGRectGetWidth(view.bounds), CGRectGetHeight(view.bounds));
 
     if ([className isEqualToString:@"CCUIHeaderPocketView"]) {
-        CGFloat radius = MIN(20.0, CGRectGetHeight(view.bounds) * 0.16);
-        IOS26CCApplyGlass(view, 0.08, radius, YES);
+        CGFloat radius = MIN(18.0, CGRectGetHeight(view.bounds) * 0.16);
+        IOS26CCApplyGlass(view, radius, 0.035, 0.24);
     } else if ([className isEqualToString:@"CCUIContentModuleBackgroundView"] ||
                [className isEqualToString:@"CCUIButtonModuleView"]) {
-        IOS26CCApplyGlass(view, 0.08, IOS26CCCardRadiusForView(view), YES);
-    } else if ([className isEqualToString:@"CCUIControlTemplateView"]) {
-        // Templates often sit directly over a same-sized module background; keep their glass,
-        // but let the background view provide the single visible outline.
-        IOS26CCApplyGlass(view, 0.05, IOS26CCCardRadiusForView(view), NO);
+        IOS26CCApplyGlass(view, IOS26CCCardRadiusForView(view), 0.045, 0.30);
     } else if ([className isEqualToString:@"CCUIAccessoryButton"] ||
                [className isEqualToString:@"CCUIPowerButton"] ||
                [className isEqualToString:@"CCUIRoundButton"]) {
-        IOS26CCApplyGlass(view, 0.12, minimumDimension * 0.5, YES);
+        IOS26CCApplyGlass(view, minimumDimension * 0.5, 0.055, 0.34);
     } else if ([className isEqualToString:@"CCUIContinuousSliderView"] ||
                [className isEqualToString:@"CCUISteppedSliderView"]) {
-        IOS26CCApplyGlass(view, 0.08, minimumDimension * 0.5, YES);
+        IOS26CCApplyGlass(view, minimumDimension * 0.5, 0.0, 0.25);
     }
 }
 
