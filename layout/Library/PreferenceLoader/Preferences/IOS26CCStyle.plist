@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>entry</key>
+    <dict>
+        <key>bundle</key>
+        <string>IOS26CCStylePrefs</string>
+        <key>cell</key>
+        <string>PSLinkCell</string>
+        <key>detail</key>
+        <string>IOS26CCStyleRootListController</string>
+        <key>isController</key>
+        <true/>
+        <key>label</key>
+        <string>iOS 26 Control Center Style</string>
+    </dict>
+    <key>version</key>
+    <string>1.0</string>
+</dict>
+</plist>
