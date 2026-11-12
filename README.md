@@ -1,10 +1,12 @@
-# iOS 26 Control Center Style 0.7.0
+# iOS 26 Control Center Style 0.8.0
 
 Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 
 Hooks only the Control Center classes via the ObjC runtime (no global UIView hook, no CydiaSubstrate). The header pocket (top oval) is not styled. The 0.4.2 source is kept as `old-Tweak-0.4.2.x.txt`.
 
 ## Glass layers (per module / button / slider)
+Expanded menus (Wi-Fi, Focus, brightness, ...) get the same glass layers: every rounded, clipping view inside a module container is decorated using its own system radius. Switch: "Expanded menus".
+
 Outer specular rim (bright top-left and bottom-right) · refracted inner rim · inner edge glow (glass thickness) · top sheen · corner highlights · tunable fill tint · optional extra blur.
 
 ## Settings

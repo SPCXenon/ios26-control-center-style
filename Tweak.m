@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.7.0
+// IOS26CCStyle 0.8.0
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -17,7 +17,7 @@ static NSString *const kReloadNotification = @"com.codex.ios26ccstyle/reload";
 // MARK: - Preferences ---------------------------------------------------------
 
 static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur;
-static BOOL    gStyleModules, gStyleButtons, gStyleSliders;
+static BOOL    gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus;
 static CGFloat gMaxRadius;     // corner radius cap for modules (pt)
 static CGFloat gRim, gRimWidth;// rim light intensity 0…1, stroke width pt
 static CGFloat gSheen, gTint;  // top sheen alpha, fill tint alpha
@@ -91,6 +91,7 @@ static void LoadPrefs(void) {
     gStyleModules  = PrefBool(@"styleModules", YES);
     gStyleButtons  = PrefBool(@"styleButtons", YES);
     gStyleSliders  = PrefBool(@"styleSliders", YES);
+    gStyleMenus    = PrefBool(@"styleMenus", YES);
     gSliderCapsule = PrefBool(@"sliderCapsule", YES);
     gContinuous    = PrefBool(@"continuousCorners", YES);
     gExtraBlur     = PrefBool(@"extraBlur", NO);
@@ -111,6 +112,7 @@ static void LoadPrefs(void) {
 typedef NS_ENUM(NSInteger, CCKind) {
     CCKindModuleFill,   // CCUIContentModuleBackgroundView – owns the glass fill
     CCKindModule,       // module cards / control templates (pills, tiles)
+    CCKindContainer,    // module content container; also decorates expanded-menu views inside it
     CCKindRound,        // circular buttons (+, power, accessories)
     CCKindSlider,       // brightness / volume sliders
 };
@@ -123,12 +125,17 @@ static const void *kHotTLKey  = &kHotTLKey;   // corner highlight, top-left
 static const void *kHotBRKey  = &kHotBRKey;   // corner highlight, bottom-right
 static const void *kBlurKey   = &kBlurKey;    // optional extra blur view
 static const void *kSigKey    = &kSigKey;
+static const void *kStyledKey = &kStyledKey; // set on views styled through a class hook
+static const void *kMenuKey   = &kMenuKey;   // set on views decorated by the menu walk
+static const void *kLastRKey  = &kLastRKey;  // corner radius we applied last
+static const void *kSysRKey   = &kSysRKey;   // corner radius the system had set
 static NSHashTable<UIView *> *gTracked;       // weak; used to restyle after a prefs change
 
 static BOOL KindEnabled(CCKind kind) {
     switch (kind) {
         case CCKindModuleFill:
-        case CCKindModule: return gStyleModules;
+        case CCKindModule:
+        case CCKindContainer: return gStyleModules;
         case CCKindRound:  return gStyleButtons;
         case CCKindSlider: return gStyleSliders;
     }
@@ -301,23 +308,83 @@ static void ApplyExtraBlur(UIView *v, CGRect b) {
     if (!CGRectEqualToRect(blur.frame, b)) blur.frame = b;
 }
 
+// MARK: - Expanded menus ------------------------------------------------------
+
+static void ApplyMenuDecor(UIView *v) {
+    if (!v.window) return;
+    CALayer *layer = v.layer;
+    CGRect b = v.bounds;
+    // Only views the system already rounds AND clips: the glass layers stay inside the shape.
+    BOOL candidate = layer.masksToBounds && layer.cornerRadius >= 10.0 &&
+                     b.size.width >= 36.0 && b.size.height >= 36.0 && !v.hidden && v.alpha > 0.01;
+    BOOL flagged = objc_getAssociatedObject(v, kMenuKey) != nil;
+
+    if (!gEnabled || !gStyleMenus || !candidate) {
+        if (flagged) HideDecor(v);
+        return;
+    }
+    objc_setAssociatedObject(v, kMenuKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    ApplyDecor(v, b, MIN(layer.cornerRadius, MIN(b.size.width, b.size.height) / 2.0));
+
+    if (!gTracked) gTracked = [NSHashTable weakObjectsHashTable];
+    [gTracked addObject:v];
+}
+
+static void WalkMenus(UIView *root, int depth, int *budget) {
+    if (depth > 10) return;
+    for (UIView *s in root.subviews) {
+        if (*budget <= 0) return;
+        (*budget)--;
+        if (!objc_getAssociatedObject(s, kStyledKey)) ApplyMenuDecor(s);
+        WalkMenus(s, depth + 1, budget);
+    }
+}
+
+static void DecorateMenus(UIView *container) {
+    int budget = 250;
+    WalkMenus(container, 0, &budget);
+}
+
 static void ApplyStyle(UIView *v, CCKind kind) {
     if (!v.window) return;
-    if (!gEnabled || !KindEnabled(kind)) { HideDecor(v); return; }
+    if (!gEnabled || !KindEnabled(kind)) {
+        HideDecor(v);
+        if (kind == CCKindContainer && gEnabled) DecorateMenus(v);
+        return;
+    }
 
     CGRect b = v.bounds;
     if (b.size.width < 4.0 || b.size.height < 4.0) return;
 
     // Skip the full-page wrapper so no outline is drawn around the whole page.
-    if ((kind == CCKindModule || kind == CCKindModuleFill) &&
+    if ((kind == CCKindModule || kind == CCKindModuleFill || kind == CCKindContainer) &&
         b.size.height > v.window.bounds.size.height * 0.72) {
         HideDecor(v);
+        if (kind == CCKindContainer) DecorateMenus(v);
         return;
     }
 
-    CGFloat r = TargetRadius(kind, b.size);
-
     CALayer *layer = v.layer;
+
+    // Remember the radius the system itself uses (expanded modules are rounder than
+    // tiles) and never go below it, so inner and outer shapes keep matching.
+    CGFloat cur = layer.cornerRadius;
+    NSNumber *last = objc_getAssociatedObject(v, kLastRKey);
+    CGFloat sys;
+    if (last && fabs(cur - last.doubleValue) < 0.5) {
+        sys = [objc_getAssociatedObject(v, kSysRKey) doubleValue];
+    } else {
+        sys = cur;
+        objc_setAssociatedObject(v, kSysRKey, @(cur), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+
+    CGFloat r = TargetRadius(kind, b.size);
+    if (kind != CCKindRound && kind != CCKindSlider) {
+        r = MIN(MIN(b.size.width, b.size.height) / 2.0, MAX(r, sys));
+    }
+    objc_setAssociatedObject(v, kLastRKey, @(r), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(v, kStyledKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
     layer.cornerCurve   = gContinuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
     layer.cornerRadius  = r;
     layer.masksToBounds = YES;
@@ -332,6 +399,8 @@ static void ApplyStyle(UIView *v, CCKind kind) {
 
     if (!gTracked) gTracked = [NSHashTable weakObjectsHashTable];
     [gTracked addObject:v];
+
+    if (kind == CCKindContainer) DecorateMenus(v);
 }
 
 // CCUI occasionally resets its own corner radius right after the view lands in a
@@ -339,11 +408,15 @@ static void ApplyStyle(UIView *v, CCKind kind) {
 static void ScheduleReapply(UIView *v, CCKind kind) {
     if (!v.window) return;
     __weak UIView *weak = v;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        UIView *strong = weak;
-        if (strong) ApplyStyle(strong, kind);
-    });
+    const double delays[] = { 0.12, 0.45 };   // second pass catches menu content added after expansion
+    for (int i = 0; i < 2; i++) {
+        if (i == 1 && kind != CCKindContainer) break;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[i] * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            UIView *strong = weak;
+            if (strong) ApplyStyle(strong, kind);
+        });
+    }
 }
 
 // MARK: - Hooks ---------------------------------------------------------------
@@ -388,7 +461,7 @@ static BOOL InstallHook(const char *className, SEL sel, IMP replacement, IMP *or
     }
 
 DEFINE_HOOKS(ModuleFill,   CCKindModuleFill)
-DEFINE_HOOKS(Container,    CCKindModule)
+DEFINE_HOOKS(Container,    CCKindContainer)
 DEFINE_HOOKS(Template,     CCKindModule)
 DEFINE_HOOKS(ButtonModule, CCKindModule)
 DEFINE_HOOKS(Accessory,    CCKindRound)
@@ -404,6 +477,9 @@ static void PrefsChanged(CFNotificationCenterRef center, void *observer, CFStrin
     dispatch_async(dispatch_get_main_queue(), ^{
         LoadPrefs();
         for (UIView *v in gTracked.allObjects) {
+            if (objc_getAssociatedObject(v, kMenuKey) && !objc_getAssociatedObject(v, kStyledKey)) {
+                ApplyMenuDecor(v);
+            }
             [v setNeedsLayout];
             [v layoutIfNeeded];
         }
