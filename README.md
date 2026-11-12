@@ -1,19 +1,19 @@
-# iOS 26 Control Center Style (first visual pass)
+# iOS 26 Control Center Style
 
-This rootless tweak targets SpringBoard on iOS 18. It uses the runtime-confirmed `SBControlCenterWindow` to limit changes to Control Center. Version 0.4.2 preserves the system's existing module backdrop and adds a low-opacity surface sheen plus a gradient specular rim. This avoids stacking a separate blur view over every module. Card corners scale with the shorter side, the header has a shallower radius, and round controls and slider wells use circular or capsule-shaped ends. The full-page content wrapper is skipped so no extra outline is drawn around an entire page. Existing Control Center modules and their native actions stay in place.
+This rootless tweak targets SpringBoard on iOS 18.5 and uses the runtime-confirmed `SBControlCenterWindow` to limit styling to Control Center. Version 0.4.3 adds a PreferenceLoader page in Settings and leaves `CCUIHeaderPocketView` unchanged, removing the extra oval highlight around the top status/header area. Supported module surfaces and controls keep the system's native actions.
 
-This is a visual style pass, not a full replacement of iOS 18 Control Center's layout or edit controls. The exact iOS 26 Liquid Glass renderer is not available to iOS 18; UIKit's dark thin material is used as a close approximation.
+This is a visual style pass, not a replacement for Control Center's layout or edit controls. The exact iOS 26 Liquid Glass renderer is not available on iOS 18.5; the tweak adds a subtle gradient sheen and rim to selected module views.
 
-## Build for iPhone XS
+## Build
 
-iPhone XS is arm64e. Theos documents that the current arm64e ABI requires Apple's macOS/Xcode linker. This project includes a GitHub Actions workflow for that build path, so the package can be built without changing the device or installing the system-wide `oldabi` workaround.
+The GitHub Actions workflow builds the rootless package on macOS, which supports the arm64e build path.
 
-1. Put this folder in a GitHub repository.
-2. Open the repository's **Actions** tab and run **Build rootless tweak** (or push a commit).
+1. Open the repository's **Actions** tab.
+2. Run **Build rootless tweak** on the `codex/ios18-5-header-prefs` branch, or push a commit to that branch.
 3. Download the `IOS26CCStyle-rootless-deb` artifact from the completed run.
-4. Install the `.deb` with Sileo and respring SpringBoard.
+4. Install the `.deb` with Sileo and respring SpringBoard. The tweak page appears under **Settings → Tweaks**; if it does not appear after installation, restart Preferences once.
 
-The package installs only into the rootless tweak-injection paths through Theos. It does not install a daemon or a preferences bundle.
+The package includes a PreferenceLoader bundle and installs into rootless paths through Theos. It does not install a daemon.
 
 ## Local build
 
@@ -23,4 +23,4 @@ On macOS with Theos and its iOS SDK installed:
 make clean package FINALPACKAGE=1
 ```
 
-On WSL, the Theos environment is useful for editing and ordinary builds, but arm64e system tweaks need the ABI conversion/build route described above before installing on the XS.
+The package is written to `packages/`.
