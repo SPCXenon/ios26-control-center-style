@@ -4,9 +4,13 @@ This rootless tweak targets SpringBoard on iOS 18.5 and uses the runtime-confirm
 
 This is a visual style pass, not a replacement for Control Center's layout or edit controls. The exact iOS 26 Liquid Glass renderer is not available on iOS 18.5; the tweak adds a subtle gradient sheen and rim to selected module views.
 
+## Dopamine 3 / rootless
+
+The package uses Theos' rootless scheme, installs under `/var/jb`, builds arm64 and arm64e slices, and depends on ElleKit plus PreferenceLoader. Dopamine 3 supports iOS 18.5 on supported devices; check Dopamine's official device support before installing.
+
 ## Build
 
-The GitHub Actions workflow builds the rootless package on macOS, which supports the arm64e build path.
+The GitHub Actions workflow builds the rootless package on macOS.
 
 1. Open the repository's **Actions** tab.
 2. Run **Build rootless tweak** on the `codex/ios18-5-header-prefs` branch, or push a commit to that branch.
