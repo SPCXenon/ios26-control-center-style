@@ -29,6 +29,34 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Left: ultra clear (see-through, brighter edges). Right: fully tinted (more contrast and readability). Same idea as iOS 27: Settings &gt; Appearance &gt; Liquid Glass.</string>
+			<key>label</key>
+			<string>Liquid Glass</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.5</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>glassTint</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>Elements</string>
 		</dict>
@@ -208,7 +236,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.85</real>
+			<real>0.9</real>
 			<key>defaults</key>
 			<string>com.codex.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -296,9 +324,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Color laid over module backgrounds.</string>
+			<string>Added on top of the Liquid Glass slider.</string>
 			<key>label</key>
-			<string>Fill tint</string>
+			<string>Extra fill tint</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -306,7 +334,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.05</real>
+			<real>0.0</real>
 			<key>defaults</key>
 			<string>com.codex.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -334,7 +362,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.09</real>
+			<real>0.1</real>
 			<key>defaults</key>
 			<string>com.codex.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -396,7 +424,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.12</real>
+			<real>0.15</real>
 			<key>defaults</key>
 			<string>com.codex.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -452,7 +480,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>iOS 26 Control Center Style 0.8.0</string>
+			<string>iOS 26 Control Center Style 0.9.0</string>
 			<key>label</key>
 			<string>About</string>
 		</dict>

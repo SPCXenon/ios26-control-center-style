@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.8.0
+// IOS26CCStyle 0.9.0
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -20,7 +20,12 @@ static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur;
 static BOOL    gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus;
 static CGFloat gMaxRadius;     // corner radius cap for modules (pt)
 static CGFloat gRim, gRimWidth;// rim light intensity 0…1, stroke width pt
-static CGFloat gSheen, gTint;  // top sheen alpha, fill tint alpha
+static CGFloat gSheen, gTint;  // top sheen alpha, extra fill tint alpha
+// iOS 27-style master slider: 0 = ultra clear … 1 = fully tinted (default 0.5)
+static CGFloat gGlass;         // raw slider value
+static CGFloat gMatAlpha;      // alpha of the system material views (blur) behind modules
+static CGFloat gEffTint;       // resulting fill tint alpha
+static CGFloat gRimMul;        // rim brightness multiplier (clearer glass = brighter edges)
 static CGFloat gInner, gHot;   // inner edge glow 0…1, corner highlight 0…0.3
 static UIColor *gRimColor, *gFillColor;
 static NSUInteger gGeneration; // bumped on every prefs reload
@@ -96,12 +101,16 @@ static void LoadPrefs(void) {
     gContinuous    = PrefBool(@"continuousCorners", YES);
     gExtraBlur     = PrefBool(@"extraBlur", NO);
     gMaxRadius     = (CGFloat)PrefDouble(@"maxRadius", 46.0, 16.0, 70.0);
-    gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.85, 0.0, 1.0);
+    gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.9, 0.0, 1.0);
     gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.9, 0.3, 2.5);
-    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.09, 0.0, 0.2);
-    gTint          = (CGFloat)PrefDouble(@"fillTint", 0.05, 0.0, 0.3);
+    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.10, 0.0, 0.2);
+    gTint          = (CGFloat)PrefDouble(@"fillTint", 0.0, 0.0, 0.3);
     gInner         = (CGFloat)PrefDouble(@"innerRim", 0.5, 0.0, 1.0);
-    gHot           = (CGFloat)PrefDouble(@"glow", 0.12, 0.0, 0.3);
+    gHot           = (CGFloat)PrefDouble(@"glow", 0.15, 0.0, 0.3);
+    gGlass         = (CGFloat)PrefDouble(@"glassTint", 0.5, 0.0, 1.0);
+    gMatAlpha      = 0.35 + 0.65 * gGlass;
+    gEffTint       = MIN(0.5, 0.03 + 0.17 * gGlass + gTint);
+    gRimMul        = 1.3 - 0.5 * gGlass;
     gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
     gFillColor     = ColorNamed(PrefString(@"fillColor", @"white"));
     gGeneration++;
@@ -202,6 +211,7 @@ static id RimColor(CGFloat alpha) {
 // Liquid-glass decoration. Every piece is a plain CALayer (they never take touches).
 static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     BOOL wantRim   = gRim > 0.001;
+    CGFloat rimE   = MIN(1.0, gRim * gRimMul);
     BOOL wantEdge  = wantRim;
     BOOL wantGlow  = gInner > 0.001;
     BOOL wantSheen = gSheen > 0.001;
@@ -239,12 +249,12 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     if (wantRim) {
         // Bright at the top-left and bottom-right corners, dim in between.
         ConfigureStroke(rim, b, radius, 0.0, gRimWidth,
-                        @[RimColor(0.75 * gRim), RimColor(0.08 * gRim), RimColor(0.08 * gRim), RimColor(0.45 * gRim)],
+                        @[RimColor(0.75 * rimE), RimColor(0.08 * rimE), RimColor(0.08 * rimE), RimColor(0.45 * rimE)],
                         CGPointMake(0.0, 0.0), CGPointMake(1.0, 1.0));
         // Second, fainter line just inside the first, lit from the opposite diagonal
         // (reads as refraction through the glass edge).
         ConfigureStroke(edge, b, radius, gRimWidth + 1.1, 0.55,
-                        @[RimColor(0.05 * gRim), RimColor(0.28 * gRim), RimColor(0.28 * gRim), RimColor(0.05 * gRim)],
+                        @[RimColor(0.05 * rimE), RimColor(0.28 * rimE), RimColor(0.28 * rimE), RimColor(0.05 * rimE)],
                         CGPointMake(1.0, 0.0), CGPointMake(0.0, 1.0));
     }
 
@@ -308,6 +318,20 @@ static void ApplyExtraBlur(UIView *v, CGRect b) {
     if (!CGRectEqualToRect(blur.frame, b)) blur.frame = b;
 }
 
+// MARK: - Material clarity (iOS 27-style Clear ↔ Tinted) ----------------------
+
+// Dims the system blur material behind a view so the wallpaper shows through.
+static void SetMaterialAlpha(UIView *root, int depth, CGFloat alpha) {
+    if (depth > 3) return;
+    for (UIView *s in root.subviews) {
+        if ([NSStringFromClass(s.class) containsString:@"MaterialView"]) {
+            if (fabs(s.alpha - alpha) > 0.001) s.alpha = alpha;
+            continue;
+        }
+        SetMaterialAlpha(s, depth + 1, alpha);
+    }
+}
+
 // MARK: - Expanded menus ------------------------------------------------------
 
 static void ApplyMenuDecor(UIView *v) {
@@ -349,6 +373,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     if (!v.window) return;
     if (!gEnabled || !KindEnabled(kind)) {
         HideDecor(v);
+        SetMaterialAlpha(v, 0, 1.0);
         if (kind == CCKindContainer && gEnabled) DecorateMenus(v);
         return;
     }
@@ -390,8 +415,10 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     layer.masksToBounds = YES;
     layer.borderWidth   = 0.0;
 
+    SetMaterialAlpha(v, 0, gMatAlpha);
+
     if (kind == CCKindModuleFill) {
-        v.backgroundColor = gTint > 0.001 ? [gFillColor colorWithAlphaComponent:gTint] : nil;
+        v.backgroundColor = gEffTint > 0.001 ? [gFillColor colorWithAlphaComponent:gEffTint] : nil;
         ApplyExtraBlur(v, b);
     }
 
