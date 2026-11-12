@@ -1,6 +1,6 @@
 # iOS 26 Control Center Style (first visual pass)
 
-This rootless tweak targets SpringBoard on iOS 18. It uses the runtime-confirmed `SBControlCenterWindow` to limit changes to Control Center. Version 0.3.0 styles `CCUIContentModuleBackgroundView`, `CCUIControlTemplateView`, `CCUIContentModuleContentContainerView`, `CCUIHeaderPocketView`, and small header buttons with rounded translucent materials. It reapplies the treatment as views enter the window and after their layout updates. Existing Control Center modules and their native actions stay in place.
+This rootless tweak targets SpringBoard on iOS 18. It uses the runtime-confirmed `SBControlCenterWindow` to limit changes to Control Center. Version 0.4.0 applies a dark thin blur, subtle tint, soft highlight, and continuous rounded corners to the header pocket, module surfaces, round controls, and slider wells. It deliberately skips the full-page content wrapper so no extra outline is drawn around an entire page. Existing Control Center modules and their native actions stay in place.
 
 This is a visual style pass, not a full replacement of iOS 18 Control Center's layout or edit controls. The exact iOS 26 Liquid Glass renderer is not available to iOS 18; UIKit's dark thin material is used as a close approximation.
 

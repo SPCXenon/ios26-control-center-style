@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
+#import <math.h>
 
 static BOOL IOS26CCIsTargetWindow(UIWindow *window) {
     if (!window) {
@@ -14,39 +15,68 @@ static BOOL IOS26CCIsTargetWindow(UIWindow *window) {
     return controlCenterWindowClass && [window isKindOfClass:controlCenterWindowClass];
 }
 
-static void IOS26CCApplyModuleGlass(UIView *view, CGFloat tintAlpha, CGFloat radius) {
-    UIColor *tint = [UIColor colorWithWhite:1.0 alpha:tintAlpha];
-    view.backgroundColor = tint;
-    view.layer.backgroundColor = tint.CGColor;
-    view.layer.cornerRadius = radius;
-    view.layer.cornerCurve = kCACornerCurveContinuous;
-    view.layer.borderWidth = 0.8;
-    view.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.24].CGColor;
-    view.opaque = NO;
+static char kIOS26CCGlassViewKey;
+
+static UIVisualEffectView *IOS26CCGlassViewFor(UIView *view) {
+    UIVisualEffectView *glassView = objc_getAssociatedObject(view, &kIOS26CCGlassViewKey);
+    if (!glassView) {
+        UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark];
+        glassView = [[UIVisualEffectView alloc] initWithEffect:blur];
+        glassView.userInteractionEnabled = NO;
+        glassView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [view insertSubview:glassView atIndex:0];
+        objc_setAssociatedObject(view, &kIOS26CCGlassViewKey, glassView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    glassView.frame = view.bounds;
+    return glassView;
 }
 
-static void IOS26CCApplySoftControlStyle(UIView *view, CGFloat radius) {
+static CGFloat IOS26CCRadiusForView(UIView *view) {
+    CGFloat width = CGRectGetWidth(view.bounds);
+    CGFloat height = CGRectGetHeight(view.bounds);
+    if (width > 0.0 && height > 0.0 && fabs(width - height) < 4.0) {
+        return MIN(width, height) * 0.5;
+    }
+    return MIN(28.0, MIN(width, height) * 0.24);
+}
+
+static void IOS26CCApplyGlass(UIView *view, CGFloat tintAlpha, BOOL circular) {
+    if (CGRectGetWidth(view.bounds) <= 0.0 || CGRectGetHeight(view.bounds) <= 0.0) {
+        return;
+    }
+
+    CGFloat radius = circular ? MIN(CGRectGetWidth(view.bounds), CGRectGetHeight(view.bounds)) * 0.5
+                              : IOS26CCRadiusForView(view);
+    UIVisualEffectView *glassView = IOS26CCGlassViewFor(view);
+    glassView.layer.cornerRadius = radius;
+    glassView.layer.cornerCurve = kCACornerCurveContinuous;
+    glassView.clipsToBounds = YES;
+    glassView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:tintAlpha];
+
     view.layer.cornerRadius = radius;
     view.layer.cornerCurve = kCACornerCurveContinuous;
-    view.layer.borderWidth = 0.6;
-    view.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.16].CGColor;
-    view.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.08];
+    view.layer.borderWidth = 0.35;
+    view.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.15].CGColor;
+    view.opaque = NO;
 }
 
 static void IOS26CCStyleView(UIView *view) {
     NSString *className = NSStringFromClass(view.class);
-    if ([className isEqualToString:@"CCUIContentModuleBackgroundView"]) {
-        IOS26CCApplyModuleGlass(view, 0.18, 26.0);
-    } else if ([className isEqualToString:@"CCUIControlTemplateView"]) {
-        IOS26CCApplyModuleGlass(view, 0.07, 22.0);
-    } else if ([className isEqualToString:@"CCUIContentModuleContentContainerView"]) {
-        IOS26CCApplyModuleGlass(view, 0.06, 26.0);
-    } else if ([className isEqualToString:@"CCUIHeaderPocketView"]) {
-        IOS26CCApplySoftControlStyle(view, 24.0);
+
+    if ([className isEqualToString:@"CCUIHeaderPocketView"] ||
+        [className isEqualToString:@"CCUIContentModuleBackgroundView"] ||
+        [className isEqualToString:@"CCUIControlTemplateView"] ||
+        [className isEqualToString:@"CCUIButtonModuleView"]) {
+        IOS26CCApplyGlass(view, 0.08, NO);
     } else if ([className isEqualToString:@"CCUIAccessoryButton"] ||
                [className isEqualToString:@"CCUIPowerButton"] ||
                [className isEqualToString:@"CCUIRoundButton"]) {
-        IOS26CCApplySoftControlStyle(view, MIN(CGRectGetWidth(view.bounds), CGRectGetHeight(view.bounds)) * 0.5);
+        IOS26CCApplyGlass(view, 0.12, YES);
+    } else if ([className isEqualToString:@"CCUIContinuousSliderView"] ||
+               [className isEqualToString:@"CCUISteppedSliderView"] ||
+               [className isEqualToString:@"CCUIBaseSliderContentView"] ||
+               [className isEqualToString:@"_CCUIBaseSliderContentView"]) {
+        IOS26CCApplyGlass(view, 0.08, NO);
     }
 }
 
