@@ -100,10 +100,9 @@ static void IOS26CCApplyGlass(UIView *view, CGFloat radius, CGFloat sheenOpacity
 
 static void IOS26CCStyleView(UIView *view) {
     NSString *className = NSStringFromClass(view.class);
+
     CGFloat minimumDimension = MIN(CGRectGetWidth(view.bounds), CGRectGetHeight(view.bounds));
 
-    // Leave CCUIHeaderPocketView unchanged. Styling it added the unwanted oval highlight
-    // around the Control Center status/header area on the tested iOS 18.5 layout.
     if ([className isEqualToString:@"CCUIContentModuleBackgroundView"] ||
         [className isEqualToString:@"CCUIButtonModuleView"]) {
         IOS26CCApplyGlass(view, IOS26CCCardRadiusForView(view), 0.045, 0.30);
