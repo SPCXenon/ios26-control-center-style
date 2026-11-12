@@ -6,89 +6,393 @@
 	<dict>
 		<key>cell</key>
 		<string>PSLinkCell</string>
+		<key>icon</key>
+		<string>IOS26CCStyle.png</string>
 		<key>label</key>
 		<string>iOS 26 CC Style</string>
 	</dict>
-	<key>title</key>
-	<string>iOS 26 CC Style</string>
 	<key>items</key>
 	<array>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>General</string>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Liquid Glass look for the iOS 18 Control Center. Changes apply live. Turning an element off fully takes effect after a respring.</string>
+			<key>label</key>
+			<string>iOS 26 Control Center Style</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSSwitchCell</string>
-			<key>label</key><string>Enabled</string>
-			<key>defaults</key><string>com.codex.ios26ccstyle</string>
-			<key>key</key><string>enabled</string>
-			<key>default</key><true/>
-			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>key</key>
+			<string>enabled</string>
+			<key>label</key>
+			<string>Enabled</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSSwitchCell</string>
-			<key>label</key><string>Capsule sliders</string>
-			<key>defaults</key><string>com.codex.ios26ccstyle</string>
-			<key>key</key><string>sliderCapsule</string>
-			<key>default</key><true/>
-			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Elements</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>Module corner radius (max)</string>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>key</key>
+			<string>styleModules</string>
+			<key>label</key>
+			<string>Modules and tiles</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSSliderCell</string>
-			<key>defaults</key><string>com.codex.ios26ccstyle</string>
-			<key>key</key><string>maxRadius</string>
-			<key>default</key><real>46</real>
-			<key>min</key><real>16</real>
-			<key>max</key><real>70</real>
-			<key>showValue</key><true/>
-			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>key</key>
+			<string>styleHeader</string>
+			<key>label</key>
+			<string>Header (+, battery, power)</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>Header corner radius</string>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>key</key>
+			<string>styleButtons</string>
+			<key>label</key>
+			<string>Round buttons</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSSliderCell</string>
-			<key>defaults</key><string>com.codex.ios26ccstyle</string>
-			<key>key</key><string>headerRadius</string>
-			<key>default</key><real>38</real>
-			<key>min</key><real>12</real>
-			<key>max</key><real>70</real>
-			<key>showValue</key><true/>
-			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>key</key>
+			<string>styleSliders</string>
+			<key>label</key>
+			<string>Sliders</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>Glass rim intensity</string>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Shape</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSSliderCell</string>
-			<key>defaults</key><string>com.codex.ios26ccstyle</string>
-			<key>key</key><string>rimIntensity</string>
-			<key>default</key><real>0.6</real>
-			<key>min</key><real>0</real>
-			<key>max</key><real>1</real>
-			<key>showValue</key><true/>
-			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>key</key>
+			<string>continuousCorners</string>
+			<key>label</key>
+			<string>Continuous (squircle) corners</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>Glass fill tint</string>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>key</key>
+			<string>sliderCapsule</string>
+			<key>label</key>
+			<string>Capsule sliders</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSSliderCell</string>
-			<key>defaults</key><string>com.codex.ios26ccstyle</string>
-			<key>key</key><string>fillTint</string>
-			<key>default</key><real>0.04</real>
-			<key>min</key><real>0</real>
-			<key>max</key><real>0.15</real>
-			<key>showValue</key><true/>
-			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Upper limit. Small tiles and pills always become capsules.</string>
+			<key>label</key>
+			<string>Module corner radius</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>46.0</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>maxRadius</string>
+			<key>max</key>
+			<real>70.0</real>
+			<key>min</key>
+			<real>16.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Header corner radius</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>38.0</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>headerRadius</string>
+			<key>max</key>
+			<real>70.0</real>
+			<key>min</key>
+			<real>12.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Glass rim</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSLinkListCell</string>
+			<key>default</key>
+			<string>white</string>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>detail</key>
+			<string>PSListItemsController</string>
+			<key>key</key>
+			<string>rimColor</string>
+			<key>label</key>
+			<string>Rim color</string>
+			<key>validTitles</key>
+			<array>
+				<string>White</string>
+				<string>Blue</string>
+				<string>Teal</string>
+				<string>Green</string>
+				<string>Orange</string>
+				<string>Pink</string>
+				<string>Purple</string>
+				<string>Black</string>
+			</array>
+			<key>validValues</key>
+			<array>
+				<string>white</string>
+				<string>blue</string>
+				<string>teal</string>
+				<string>green</string>
+				<string>orange</string>
+				<string>pink</string>
+				<string>purple</string>
+				<string>black</string>
+			</array>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>0 turns the rim light off.</string>
+			<key>label</key>
+			<string>Rim intensity</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.6</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>rimIntensity</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Rim width</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.8</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>rimWidth</string>
+			<key>max</key>
+			<real>2.5</real>
+			<key>min</key>
+			<real>0.3</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Glass fill</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSLinkListCell</string>
+			<key>default</key>
+			<string>white</string>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>detail</key>
+			<string>PSListItemsController</string>
+			<key>key</key>
+			<string>fillColor</string>
+			<key>label</key>
+			<string>Fill color</string>
+			<key>validTitles</key>
+			<array>
+				<string>White</string>
+				<string>Blue</string>
+				<string>Teal</string>
+				<string>Green</string>
+				<string>Orange</string>
+				<string>Pink</string>
+				<string>Purple</string>
+				<string>Black</string>
+			</array>
+			<key>validValues</key>
+			<array>
+				<string>white</string>
+				<string>blue</string>
+				<string>teal</string>
+				<string>green</string>
+				<string>orange</string>
+				<string>pink</string>
+				<string>purple</string>
+				<string>black</string>
+			</array>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Color laid over module backgrounds.</string>
+			<key>label</key>
+			<string>Fill tint</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.04</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>fillTint</string>
+			<key>max</key>
+			<real>0.3</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Soft highlight fading down from the top edge.</string>
+			<key>label</key>
+			<string>Top sheen</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.06</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>sheen</string>
+			<key>max</key>
+			<real>0.2</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>iOS 26 Control Center Style 0.6.0</string>
+			<key>label</key>
+			<string>About</string>
 		</dict>
 	</array>
+	<key>title</key>
+	<string>iOS 26 CC Style</string>
 </dict>
 </plist>

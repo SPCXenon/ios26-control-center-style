@@ -1,22 +1,23 @@
-# iOS 26 Control Center Style 0.5.0
+# iOS 26 Control Center Style 0.6.0
 
 Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 
-Rewritten from 0.4.2 (kept as `old-Tweak-0.4.2.x.txt`): hooks only the Control Center classes via the ObjC runtime (no global UIView hook, no CydiaSubstrate).
+Hooks only the Control Center classes via the ObjC runtime (no global UIView hook, no CydiaSubstrate). The 0.4.2 source is kept as `old-Tweak-0.4.2.x.txt`.
 
-- Glass rim: 0.8pt gradient stroke, bright at top-left / bottom-right.
-- Adaptive corners: pills, tiles and round buttons become capsules/circles; large modules capped by `maxRadius`.
-- Capsule sliders, tunable fill tint.
-- Live settings (PreferenceLoader page, or `com.codex.ios26ccstyle` prefs); no respring needed.
+## Settings
+Settings → **iOS 26 CC Style** (needs PreferenceLoader). Changes apply live.
 
-| Key | Default | Range |
-|---|---|---|
-| enabled | true | |
-| sliderCapsule | true | |
-| maxRadius | 46 | 16-70 |
-| headerRadius | 38 | 12-70 |
-| rimIntensity | 0.6 | 0-1 |
-| fillTint | 0.04 | 0-0.15 |
+| Section | Options |
+|---|---|
+| General | Enabled |
+| Elements | Modules/tiles, Header, Round buttons, Sliders (each on/off) |
+| Shape | Continuous corners, Capsule sliders, Module radius cap, Header radius |
+| Glass rim | Color (8 presets), Intensity, Width |
+| Glass fill | Color (8 presets), Tint, Top sheen |
+
+Prefs domain: `com.codex.ios26ccstyle` (keys: enabled, styleModules, styleHeader, styleButtons, styleSliders, continuousCorners, sliderCapsule, maxRadius, headerRadius, rimColor, rimIntensity, rimWidth, fillColor, fillTint, sheen). Darwin notification: `com.codex.ios26ccstyle/reload`.
+
+Small tiles, pills and round buttons are always capsules/circles; the full-page wrapper is skipped so no outline is drawn around the whole page. Turning an element off fully takes effect after a respring.
 
 ## Build
 arm64e needs Apple's linker, so build with the GitHub Actions workflow (**Build rootless tweak**, runs on every push).
