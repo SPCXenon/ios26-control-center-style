@@ -21,6 +21,11 @@ jobs:
       - name: Build package
         run: make clean package FINALPACKAGE=1
 
+      - name: Show package contents
+        run: |
+          dpkg-deb -I packages/*.deb
+          dpkg-deb -c packages/*.deb
+
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
