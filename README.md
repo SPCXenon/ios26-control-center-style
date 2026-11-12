@@ -1,26 +1,23 @@
-# iOS 26 Control Center Style (first visual pass)
+# iOS 26 Control Center Style 0.5.0
 
-This rootless tweak targets SpringBoard on iOS 18. It uses the runtime-confirmed `SBControlCenterWindow` to limit changes to Control Center. Version 0.4.2 preserves the system's existing module backdrop and adds a low-opacity surface sheen plus a gradient specular rim. This avoids stacking a separate blur view over every module. Card corners scale with the shorter side, the header has a shallower radius, and round controls and slider wells use circular or capsule-shaped ends. The full-page content wrapper is skipped so no extra outline is drawn around an entire page. Existing Control Center modules and their native actions stay in place.
+Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 
-This is a visual style pass, not a full replacement of iOS 18 Control Center's layout or edit controls. The exact iOS 26 Liquid Glass renderer is not available to iOS 18; UIKit's dark thin material is used as a close approximation.
+Rewritten from 0.4.2 (kept as `old-Tweak-0.4.2.x.txt`): hooks only the Control Center classes via the ObjC runtime (no global UIView hook, no CydiaSubstrate).
 
-## Build for iPhone XS
+- Glass rim: 0.8pt gradient stroke, bright at top-left / bottom-right.
+- Adaptive corners: pills, tiles and round buttons become capsules/circles; large modules capped by `maxRadius`.
+- Capsule sliders, tunable fill tint.
+- Live settings (PreferenceLoader page, or `com.codex.ios26ccstyle` prefs); no respring needed.
 
-iPhone XS is arm64e. Theos documents that the current arm64e ABI requires Apple's macOS/Xcode linker. This project includes a GitHub Actions workflow for that build path, so the package can be built without changing the device or installing the system-wide `oldabi` workaround.
+| Key | Default | Range |
+|---|---|---|
+| enabled | true | |
+| sliderCapsule | true | |
+| maxRadius | 46 | 16-70 |
+| headerRadius | 38 | 12-70 |
+| rimIntensity | 0.6 | 0-1 |
+| fillTint | 0.04 | 0-0.15 |
 
-1. Put this folder in a GitHub repository.
-2. Open the repository's **Actions** tab and run **Build rootless tweak** (or push a commit).
-3. Download the `IOS26CCStyle-rootless-deb` artifact from the completed run.
-4. Install the `.deb` with Sileo and respring SpringBoard.
-
-The package installs only into the rootless tweak-injection paths through Theos. It does not install a daemon or a preferences bundle.
-
-## Local build
-
-On macOS with Theos and its iOS SDK installed:
-
-```sh
-make clean package FINALPACKAGE=1
-```
-
-On WSL, the Theos environment is useful for editing and ordinary builds, but arm64e system tweaks need the ABI conversion/build route described above before installing on the XS.
+## Build
+arm64e needs Apple's linker, so build with the GitHub Actions workflow (**Build rootless tweak**, runs on every push).
+Download the `IOS26CCStyle-rootless-deb` artifact, install with Sileo/Filza, respring.

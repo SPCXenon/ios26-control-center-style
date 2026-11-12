@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>entry</key>
+	<dict>
+		<key>cell</key>
+		<string>PSLinkCell</string>
+		<key>label</key>
+		<string>iOS 26 CC Style</string>
+	</dict>
+	<key>title</key>
+	<string>iOS 26 CC Style</string>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>General</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>Enabled</string>
+			<key>defaults</key><string>com.codex.ios26ccstyle</string>
+			<key>key</key><string>enabled</string>
+			<key>default</key><true/>
+			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>Capsule sliders</string>
+			<key>defaults</key><string>com.codex.ios26ccstyle</string>
+			<key>key</key><string>sliderCapsule</string>
+			<key>default</key><true/>
+			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>Module corner radius (max)</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSliderCell</string>
+			<key>defaults</key><string>com.codex.ios26ccstyle</string>
+			<key>key</key><string>maxRadius</string>
+			<key>default</key><real>46</real>
+			<key>min</key><real>16</real>
+			<key>max</key><real>70</real>
+			<key>showValue</key><true/>
+			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>Header corner radius</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSliderCell</string>
+			<key>defaults</key><string>com.codex.ios26ccstyle</string>
+			<key>key</key><string>headerRadius</string>
+			<key>default</key><real>38</real>
+			<key>min</key><real>12</real>
+			<key>max</key><real>70</real>
+			<key>showValue</key><true/>
+			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>Glass rim intensity</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSliderCell</string>
+			<key>defaults</key><string>com.codex.ios26ccstyle</string>
+			<key>key</key><string>rimIntensity</string>
+			<key>default</key><real>0.6</real>
+			<key>min</key><real>0</real>
+			<key>max</key><real>1</real>
+			<key>showValue</key><true/>
+			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>Glass fill tint</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSliderCell</string>
+			<key>defaults</key><string>com.codex.ios26ccstyle</string>
+			<key>key</key><string>fillTint</string>
+			<key>default</key><real>0.04</real>
+			<key>min</key><real>0</real>
+			<key>max</key><real>0.15</real>
+			<key>showValue</key><true/>
+			<key>PostNotification</key><string>com.codex.ios26ccstyle/reload</string>
+		</dict>
+	</array>
+</dict>
+</plist>
