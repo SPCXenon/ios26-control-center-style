@@ -18,6 +18,13 @@ jobs:
           git clone --recursive https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
 
+      - name: Install iOS SDK with private frameworks
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
+          git -C "$RUNNER_TEMP/theos-sdks" sparse-checkout set iPhoneOS16.5.sdk
+          mkdir -p "$THEOS/sdks"
+          cp -R "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
+
       - name: Build package
         run: make clean package FINALPACKAGE=1
 
@@ -25,6 +32,9 @@ jobs:
         run: |
           dpkg-deb -I packages/*.deb
           dpkg-deb -c packages/*.deb
+          if dpkg-deb -c packages/*.deb | grep -q "var/jb/var/jb"; then echo "ERROR: double /var/jb prefix"; exit 1; fi
+          dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceBundles/IOS26CCStylePrefs.bundle/IOS26CCStylePrefs" || { echo "ERROR: prefs bundle missing"; exit 1; }
+          dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceLoader/Preferences/IOS26CCStyle.plist" || { echo "ERROR: PreferenceLoader entry missing"; exit 1; }
 
       - name: Upload package
         uses: actions/upload-artifact@v4

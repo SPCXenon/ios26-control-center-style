@@ -1,10 +1,9 @@
 Package: com.codex.ios26ccstyle
 Name: iOS 26 Control Center Style
-Version: 0.6.0
+Version: 0.7.0
 Architecture: iphoneos-arm64
-Description: Liquid Glass look for the iOS 18 Control Center: adaptive capsule corners, glass rim light and tunable fill.
+Description: Liquid Glass look for the iOS 18 Control Center: capsule corners, specular rim, inner glass glow and a Settings page.
 Maintainer: Codex
 Author: Codex
 Section: Tweaks
-Depends: firmware (>= 18.0), ellekit
-Suggests: preferenceloader
+Depends: firmware (>= 18.0), ellekit, preferenceloader

@@ -1,4 +1,4 @@
-TARGET := iphone:clang:latest:15.0
+TARGET := iphone:clang:16.5:15.0
 ARCHS := arm64e
 THEOS_PACKAGE_SCHEME := rootless
 
@@ -11,4 +11,7 @@ IOS26CCStyle_FILES := Tweak.m
 IOS26CCStyle_FRAMEWORKS := UIKit QuartzCore
 IOS26CCStyle_CFLAGS := -fobjc-arc -Wno-deprecated-declarations
 
+SUBPROJECTS += prefs
+
 include $(THEOS_MAKE_PATH)/tweak.mk
+include $(THEOS_MAKE_PATH)/aggregate.mk

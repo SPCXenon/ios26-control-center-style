@@ -1,24 +1,17 @@
-# iOS 26 Control Center Style 0.6.0
+# iOS 26 Control Center Style 0.7.0
 
 Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 
-Hooks only the Control Center classes via the ObjC runtime (no global UIView hook, no CydiaSubstrate). The 0.4.2 source is kept as `old-Tweak-0.4.2.x.txt`.
+Hooks only the Control Center classes via the ObjC runtime (no global UIView hook, no CydiaSubstrate). The header pocket (top oval) is not styled. The 0.4.2 source is kept as `old-Tweak-0.4.2.x.txt`.
+
+## Glass layers (per module / button / slider)
+Outer specular rim (bright top-left and bottom-right) · refracted inner rim · inner edge glow (glass thickness) · top sheen · corner highlights · tunable fill tint · optional extra blur.
 
 ## Settings
-Settings → **iOS 26 CC Style** (needs PreferenceLoader). Changes apply live.
+Settings → **iOS 26 CC Style** (PreferenceLoader preference bundle). Changes apply live; **Respring** button at the bottom.
 
-| Section | Options |
-|---|---|
-| General | Enabled |
-| Elements | Modules/tiles, Header, Round buttons, Sliders (each on/off) |
-| Shape | Continuous corners, Capsule sliders, Module radius cap, Header radius |
-| Glass rim | Color (8 presets), Intensity, Width |
-| Glass fill | Color (8 presets), Tint, Top sheen |
-
-Prefs domain: `com.codex.ios26ccstyle` (keys: enabled, styleModules, styleHeader, styleButtons, styleSliders, continuousCorners, sliderCapsule, maxRadius, headerRadius, rimColor, rimIntensity, rimWidth, fillColor, fillTint, sheen). Darwin notification: `com.codex.ios26ccstyle/reload`.
-
-Small tiles, pills and round buttons are always capsules/circles; the full-page wrapper is skipped so no outline is drawn around the whole page. Turning an element off fully takes effect after a respring.
+Prefs domain `com.codex.ios26ccstyle`: enabled, styleModules, styleButtons, styleSliders, continuousCorners, sliderCapsule, maxRadius, rimColor, rimIntensity, rimWidth, fillColor, fillTint, sheen, innerRim, glow, extraBlur. Darwin notification: `com.codex.ios26ccstyle/reload`.
 
 ## Build
-arm64e needs Apple's linker, so build with the GitHub Actions workflow (**Build rootless tweak**, runs on every push).
+arm64e needs Apple's linker, so build with GitHub Actions (**Build rootless tweak**, every push). The workflow installs the Theos iOS 16.5 SDK (it contains the private `Preferences` framework stub) and fails if the package has a double `/var/jb` prefix or lacks the prefs bundle.
 Download the `IOS26CCStyle-rootless-deb` artifact, install with Sileo/Filza, respring.

@@ -1,9 +1,10 @@
-// IOS26CCStyle 0.6.0
+// IOS26CCStyle 0.7.0
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
 // No CydiaSubstrate dependency: hooks are installed with the ObjC runtime
-// (class_addMethod / method_setImplementation).
+// (class_addMethod / method_setImplementation). The header pocket (top oval) is
+// intentionally left untouched.
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
@@ -15,13 +16,14 @@ static NSString *const kReloadNotification = @"com.codex.ios26ccstyle/reload";
 
 // MARK: - Preferences ---------------------------------------------------------
 
-static BOOL    gEnabled, gSliderCapsule, gContinuous;
-static BOOL    gStyleModules, gStyleHeader, gStyleButtons, gStyleSliders;
-static CGFloat gMaxRadius, gHeaderRadius;   // corner radius caps (pt)
-static CGFloat gRim, gRimWidth;             // rim light intensity 0…1, stroke width pt
-static CGFloat gSheen, gTint;               // top sheen alpha, fill tint alpha
+static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur;
+static BOOL    gStyleModules, gStyleButtons, gStyleSliders;
+static CGFloat gMaxRadius;     // corner radius cap for modules (pt)
+static CGFloat gRim, gRimWidth;// rim light intensity 0…1, stroke width pt
+static CGFloat gSheen, gTint;  // top sheen alpha, fill tint alpha
+static CGFloat gInner, gHot;   // inner edge glow 0…1, corner highlight 0…0.3
 static UIColor *gRimColor, *gFillColor;
-static NSUInteger gGeneration;              // bumped on every prefs reload
+static NSUInteger gGeneration; // bumped on every prefs reload
 
 static CFPropertyListRef CopyPref(NSString *key) {
     return CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)kPrefsDomain);
@@ -87,17 +89,18 @@ static void LoadPrefs(void) {
     CFPreferencesAppSynchronize((__bridge CFStringRef)kPrefsDomain);
     gEnabled       = PrefBool(@"enabled", YES);
     gStyleModules  = PrefBool(@"styleModules", YES);
-    gStyleHeader   = PrefBool(@"styleHeader", YES);
     gStyleButtons  = PrefBool(@"styleButtons", YES);
     gStyleSliders  = PrefBool(@"styleSliders", YES);
     gSliderCapsule = PrefBool(@"sliderCapsule", YES);
     gContinuous    = PrefBool(@"continuousCorners", YES);
+    gExtraBlur     = PrefBool(@"extraBlur", NO);
     gMaxRadius     = (CGFloat)PrefDouble(@"maxRadius", 46.0, 16.0, 70.0);
-    gHeaderRadius  = (CGFloat)PrefDouble(@"headerRadius", 38.0, 12.0, 70.0);
-    gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.6, 0.0, 1.0);
-    gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.8, 0.3, 2.5);
-    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.06, 0.0, 0.2);
-    gTint          = (CGFloat)PrefDouble(@"fillTint", 0.04, 0.0, 0.3);
+    gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.85, 0.0, 1.0);
+    gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.9, 0.3, 2.5);
+    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.09, 0.0, 0.2);
+    gTint          = (CGFloat)PrefDouble(@"fillTint", 0.05, 0.0, 0.3);
+    gInner         = (CGFloat)PrefDouble(@"innerRim", 0.5, 0.0, 1.0);
+    gHot           = (CGFloat)PrefDouble(@"glow", 0.12, 0.0, 0.3);
     gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
     gFillColor     = ColorNamed(PrefString(@"fillColor", @"white"));
     gGeneration++;
@@ -108,21 +111,24 @@ static void LoadPrefs(void) {
 typedef NS_ENUM(NSInteger, CCKind) {
     CCKindModuleFill,   // CCUIContentModuleBackgroundView – owns the glass fill
     CCKindModule,       // module cards / control templates (pills, tiles)
-    CCKindHeader,       // CCUIHeaderPocketView
     CCKindRound,        // circular buttons (+, power, accessories)
     CCKindSlider,       // brightness / volume sliders
 };
 
-static const void *kRimLayerKey   = &kRimLayerKey;
-static const void *kSheenLayerKey = &kSheenLayerKey;
-static const void *kSigKey        = &kSigKey;
-static NSHashTable<UIView *> *gTracked;   // weak; used to restyle after a prefs change
+static const void *kRimKey    = &kRimKey;     // outer specular rim
+static const void *kEdgeKey   = &kEdgeKey;    // second, refracted inner rim
+static const void *kGlowKey   = &kGlowKey;    // inner edge glow (glass thickness)
+static const void *kSheenKey  = &kSheenKey;   // top sheen
+static const void *kHotTLKey  = &kHotTLKey;   // corner highlight, top-left
+static const void *kHotBRKey  = &kHotBRKey;   // corner highlight, bottom-right
+static const void *kBlurKey   = &kBlurKey;    // optional extra blur view
+static const void *kSigKey    = &kSigKey;
+static NSHashTable<UIView *> *gTracked;       // weak; used to restyle after a prefs change
 
 static BOOL KindEnabled(CCKind kind) {
     switch (kind) {
         case CCKindModuleFill:
         case CCKindModule: return gStyleModules;
-        case CCKindHeader: return gStyleHeader;
         case CCKindRound:  return gStyleButtons;
         case CCKindSlider: return gStyleSliders;
     }
@@ -134,50 +140,84 @@ static CGFloat TargetRadius(CCKind kind, CGSize size) {
     switch (kind) {
         case CCKindRound:  return half;
         case CCKindSlider: return gSliderCapsule ? half : MIN(half, gMaxRadius);
-        case CCKindHeader: return MIN(half, gHeaderRadius);
         default:           return MIN(half, gMaxRadius);
     }
 }
 
 static void HideDecor(UIView *v) {
-    CALayer *rim = objc_getAssociatedObject(v, kRimLayerKey);
-    CALayer *sheen = objc_getAssociatedObject(v, kSheenLayerKey);
-    rim.hidden = YES;
-    sheen.hidden = YES;
+    const void *keys[] = { kRimKey, kEdgeKey, kGlowKey, kSheenKey, kHotTLKey, kHotBRKey };
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        CALayer *l = objc_getAssociatedObject(v, keys[i]);
+        l.hidden = YES;
+    }
+    UIView *blur = objc_getAssociatedObject(v, kBlurKey);
+    blur.hidden = YES;
 }
 
-// Rim light + top sheen. Both are plain CALayers (they never take touches).
+static CAGradientLayer *EnsureGradient(UIView *v, const void *key, NSString *name,
+                                       CGFloat z, BOOL stroke, BOOL radial, BOOL want) {
+    CAGradientLayer *l = objc_getAssociatedObject(v, key);
+    if (want && !l) {
+        l = [CAGradientLayer layer];
+        l.name = name;
+        l.zPosition = z;
+        if (radial) l.type = kCAGradientLayerRadial;
+        if (stroke) l.mask = [CAShapeLayer layer];
+        objc_setAssociatedObject(v, key, l, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    l.hidden = !want;
+    if (l && l.superlayer != v.layer) [v.layer addSublayer:l];
+    return l;
+}
+
+// A gradient layer masked to a rounded-rect outline (a lit glass edge).
+static void ConfigureStroke(CAGradientLayer *g, CGRect b, CGFloat radius, CGFloat inset, CGFloat width,
+                            NSArray *colors, CGPoint start, CGPoint end) {
+    g.frame = b;
+    g.startPoint = start;
+    g.endPoint = end;
+    g.locations = @[@0.0, @0.32, @0.68, @1.0];
+    g.colors = colors;
+    CAShapeLayer *mask = (CAShapeLayer *)g.mask;
+    mask.frame = g.bounds;
+    mask.fillColor = NULL;
+    mask.strokeColor = [UIColor blackColor].CGColor;
+    mask.lineWidth = width;
+    CGRect ir = CGRectInset(g.bounds, inset + width / 2.0, inset + width / 2.0);
+    mask.path = [UIBezierPath bezierPathWithRoundedRect:ir
+                                           cornerRadius:MAX(0.0, radius - inset - width / 2.0)].CGPath;
+}
+
+static id RimColor(CGFloat alpha) {
+    return (__bridge id)[gRimColor colorWithAlphaComponent:MAX(0.0, MIN(1.0, alpha))].CGColor;
+}
+
+// Liquid-glass decoration. Every piece is a plain CALayer (they never take touches).
 static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
-    BOOL wantRim = gRim > 0.001;
+    BOOL wantRim   = gRim > 0.001;
+    BOOL wantEdge  = wantRim;
+    BOOL wantGlow  = gInner > 0.001;
     BOOL wantSheen = gSheen > 0.001;
+    BOOL wantHot   = gHot > 0.001;
 
-    CAGradientLayer *rim = objc_getAssociatedObject(v, kRimLayerKey);
-    CAGradientLayer *sheen = objc_getAssociatedObject(v, kSheenLayerKey);
+    CAGradientLayer *rim   = EnsureGradient(v, kRimKey,   @"IOS26CCRim",   1000, YES, NO,  wantRim);
+    CAGradientLayer *edge  = EnsureGradient(v, kEdgeKey,  @"IOS26CCEdge",   990, YES, NO,  wantEdge);
+    CAGradientLayer *sheen = EnsureGradient(v, kSheenKey, @"IOS26CCSheen",  900, NO,  NO,  wantSheen);
+    CAGradientLayer *hotTL = EnsureGradient(v, kHotTLKey, @"IOS26CCHotTL",  910, NO,  YES, wantHot);
+    CAGradientLayer *hotBR = EnsureGradient(v, kHotBRKey, @"IOS26CCHotBR",  910, NO,  YES, wantHot);
 
-    if (wantRim && !rim) {
-        rim = [CAGradientLayer layer];
-        rim.name = @"IOS26CCRim";
-        rim.startPoint = CGPointMake(0.0, 0.0);
-        rim.endPoint   = CGPointMake(1.0, 1.0);
-        rim.locations  = @[@0.0, @0.32, @0.68, @1.0];
-        rim.zPosition  = 1000;
-        rim.mask = [CAShapeLayer layer];
-        objc_setAssociatedObject(v, kRimLayerKey, rim, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    CAShapeLayer *glow = objc_getAssociatedObject(v, kGlowKey);
+    if (wantGlow && !glow) {
+        glow = [CAShapeLayer layer];
+        glow.name = @"IOS26CCGlow";
+        glow.zPosition = 800;
+        glow.fillRule = kCAFillRuleEvenOdd;
+        glow.fillColor = [UIColor blackColor].CGColor;   // lies outside the view; the parent clips it
+        glow.shadowOffset = CGSizeZero;
+        objc_setAssociatedObject(v, kGlowKey, glow, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    if (wantSheen && !sheen) {
-        sheen = [CAGradientLayer layer];
-        sheen.name = @"IOS26CCSheen";
-        sheen.startPoint = CGPointMake(0.5, 0.0);
-        sheen.endPoint   = CGPointMake(0.5, 1.0);
-        sheen.locations  = @[@0.0, @0.45, @1.0];
-        sheen.zPosition  = 900;
-        objc_setAssociatedObject(v, kSheenLayerKey, sheen, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-
-    rim.hidden = !wantRim;
-    sheen.hidden = !wantSheen;
-    if (rim && rim.superlayer != v.layer)     [v.layer addSublayer:rim];
-    if (sheen && sheen.superlayer != v.layer) [v.layer addSublayer:sheen];
+    glow.hidden = !wantGlow;
+    if (glow && glow.superlayer != v.layer) [v.layer addSublayer:glow];
 
     NSString *sig = [NSString stringWithFormat:@"%lu|%.1f|%.1f|%.2f",
                      (unsigned long)gGeneration, b.size.width, b.size.height, radius];
@@ -187,26 +227,36 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
 
+    CGFloat shortSide = MIN(b.size.width, b.size.height);
+
     if (wantRim) {
-        rim.frame = b;
-        rim.colors = @[
-            (__bridge id)[gRimColor colorWithAlphaComponent:0.60 * gRim].CGColor,
-            (__bridge id)[gRimColor colorWithAlphaComponent:0.07 * gRim].CGColor,
-            (__bridge id)[gRimColor colorWithAlphaComponent:0.07 * gRim].CGColor,
-            (__bridge id)[gRimColor colorWithAlphaComponent:0.34 * gRim].CGColor,
-        ];
-        CAShapeLayer *mask = (CAShapeLayer *)rim.mask;
-        mask.frame = rim.bounds;
-        mask.fillColor = NULL;
-        mask.strokeColor = [UIColor blackColor].CGColor;
-        mask.lineWidth = gRimWidth;
-        CGRect inset = CGRectInset(rim.bounds, gRimWidth / 2.0, gRimWidth / 2.0);
-        mask.path = [UIBezierPath bezierPathWithRoundedRect:inset
-                                               cornerRadius:MAX(0.0, radius - gRimWidth / 2.0)].CGPath;
+        // Bright at the top-left and bottom-right corners, dim in between.
+        ConfigureStroke(rim, b, radius, 0.0, gRimWidth,
+                        @[RimColor(0.75 * gRim), RimColor(0.08 * gRim), RimColor(0.08 * gRim), RimColor(0.45 * gRim)],
+                        CGPointMake(0.0, 0.0), CGPointMake(1.0, 1.0));
+        // Second, fainter line just inside the first, lit from the opposite diagonal
+        // (reads as refraction through the glass edge).
+        ConfigureStroke(edge, b, radius, gRimWidth + 1.1, 0.55,
+                        @[RimColor(0.05 * gRim), RimColor(0.28 * gRim), RimColor(0.28 * gRim), RimColor(0.05 * gRim)],
+                        CGPointMake(1.0, 0.0), CGPointMake(0.0, 1.0));
+    }
+
+    if (wantGlow) {
+        glow.frame = b;
+        UIBezierPath *p = [UIBezierPath bezierPathWithRect:CGRectInset(glow.bounds, -60.0, -60.0)];
+        [p appendPath:[UIBezierPath bezierPathWithRoundedRect:glow.bounds cornerRadius:radius]];
+        glow.path = p.CGPath;
+        glow.shadowPath = p.CGPath;
+        glow.shadowColor = gRimColor.CGColor;
+        glow.shadowRadius = MIN(10.0, MAX(3.0, shortSide * 0.16));
+        glow.shadowOpacity = (float)(0.85 * gInner);
     }
 
     if (wantSheen) {
         sheen.frame = b;
+        sheen.startPoint = CGPointMake(0.5, 0.0);
+        sheen.endPoint = CGPointMake(0.5, 1.0);
+        sheen.locations = @[@0.0, @0.45, @1.0];
         sheen.colors = @[
             (__bridge id)[UIColor colorWithWhite:1.0 alpha:gSheen].CGColor,
             (__bridge id)[UIColor colorWithWhite:1.0 alpha:gSheen * 0.25].CGColor,
@@ -214,7 +264,41 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
         ];
     }
 
+    if (wantHot) {
+        CGFloat a = MIN(0.6, gHot * 2.5);
+        NSArray *cols = @[(__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
+                          (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
+        hotTL.frame = b;
+        hotTL.locations = @[@0.0, @1.0];
+        hotTL.colors = cols;
+        hotTL.startPoint = CGPointMake(0.06, 0.04);
+        hotTL.endPoint = CGPointMake(0.62, 0.70);
+        hotBR.frame = b;
+        hotBR.locations = @[@0.0, @1.0];
+        hotBR.colors = cols;
+        hotBR.startPoint = CGPointMake(0.94, 0.96);
+        hotBR.endPoint = CGPointMake(0.38, 0.30);
+    }
+
     [CATransaction commit];
+}
+
+// Optional extra backdrop blur behind the module fill (experimental, off by default).
+static void ApplyExtraBlur(UIView *v, CGRect b) {
+    UIVisualEffectView *blur = objc_getAssociatedObject(v, kBlurKey);
+    if (!gExtraBlur) {
+        blur.hidden = YES;
+        return;
+    }
+    if (!blur) {
+        blur = [[UIVisualEffectView alloc] initWithEffect:
+                [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
+        blur.userInteractionEnabled = NO;
+        objc_setAssociatedObject(v, kBlurKey, blur, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    blur.hidden = NO;
+    if (blur.superview != v) [v insertSubview:blur atIndex:0];
+    if (!CGRectEqualToRect(blur.frame, b)) blur.frame = b;
 }
 
 static void ApplyStyle(UIView *v, CCKind kind) {
@@ -241,6 +325,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
 
     if (kind == CCKindModuleFill) {
         v.backgroundColor = gTint > 0.001 ? [gFillColor colorWithAlphaComponent:gTint] : nil;
+        ApplyExtraBlur(v, b);
     }
 
     ApplyDecor(v, b, r);
@@ -306,7 +391,6 @@ DEFINE_HOOKS(ModuleFill,   CCKindModuleFill)
 DEFINE_HOOKS(Container,    CCKindModule)
 DEFINE_HOOKS(Template,     CCKindModule)
 DEFINE_HOOKS(ButtonModule, CCKindModule)
-DEFINE_HOOKS(Header,       CCKindHeader)
 DEFINE_HOOKS(Accessory,    CCKindRound)
 DEFINE_HOOKS(Power,        CCKindRound)
 DEFINE_HOOKS(Round,        CCKindRound)
@@ -339,7 +423,6 @@ static void IOS26CCStyleInit(void) {
         Install_Container   ("CCUIContentModuleContentContainerView");
         Install_Template    ("CCUIControlTemplateView");
         Install_ButtonModule("CCUIButtonModuleView");
-        Install_Header      ("CCUIHeaderPocketView");
         Install_Accessory   ("CCUIAccessoryButton");
         Install_Power       ("CCUIPowerButton");
         Install_Round       ("CCUIRoundButton");
