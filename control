@@ -1,8 +1,8 @@
 Package: com.codex.ios26ccstyle
 Name: iOS 26 Control Center Style
-Version: 0.1.0
+Version: 0.2.0
 Architecture: iphoneos-arm64
-Description: Adds a translucent, rounded glass treatment to iOS 18 Control Center modules.
+Description: Applies a rounded translucent style to iOS 18 Control Center modules.
 Maintainer: Codex
 Author: Codex
 Section: Tweaks
