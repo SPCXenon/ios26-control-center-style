@@ -11,3 +11,6 @@ IOS26CCStyle_FILES := Tweak.x
 IOS26CCStyle_CFLAGS := -fobjc-arc
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+
+SUBPROJECTS += prefs
+include $(THEOS_MAKE_PATH)/aggregate.mk
