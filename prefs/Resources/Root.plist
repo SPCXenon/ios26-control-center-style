@@ -480,7 +480,113 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>iOS 26 Control Center Style 0.9.0</string>
+			<string>Blur behind the whole Control Center. 1 = stock, 0 = fully clear wallpaper.</string>
+			<key>label</key>
+			<string>Background blur</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>1.0</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>bgBlur</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Specular rim, sheen, reflection streak and corner highlights.</string>
+			<key>label</key>
+			<string>Reflectivity</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.65</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>reflect</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>iOS 27-style darkened outline around glass.</string>
+			<key>label</key>
+			<string>Dark edge</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.5</real>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>edgeDark</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Writes a view dump to /var/mobile/Library/Preferences/ios26ccstyle-dump.txt</string>
+			<key>label</key>
+			<string>Diagnostics</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.codex.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.codex.ios26ccstyle</string>
+			<key>key</key>
+			<string>debugDump</string>
+			<key>label</key>
+			<string>Write view dump</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>iOS 26 Control Center Style 0.10.0</string>
 			<key>label</key>
 			<string>About</string>
 		</dict>
