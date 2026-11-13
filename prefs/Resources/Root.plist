@@ -396,7 +396,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.5</real>
+			<real>0.1</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -480,7 +480,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Blur behind the whole Control Center. 1 = stock, 0 = fully clear wallpaper.</string>
+			<string>Real blur radius of the wallpaper behind Control Center. 1 = stock, 0 = sharp wallpaper.</string>
 			<key>label</key>
 			<string>Background blur</string>
 		</dict>
@@ -518,13 +518,41 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.65</real>
+			<real>0.8</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
 			<string>reflect</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Subtle cool/warm tint on the specular edge, like glass dispersion.</string>
+			<key>label</key>
+			<string>Edge color fringe</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.5</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>dispersion</string>
 			<key>max</key>
 			<real>1.0</real>
 			<key>min</key>
@@ -586,7 +614,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>iOS 26 Control Center Style 0.1.2</string>
+			<string>iOS 26 Control Center Style 0.1.3</string>
 			<key>label</key>
 			<string>About</string>
 		</dict>

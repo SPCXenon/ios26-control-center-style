@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.1.2
+// IOS26CCStyle 0.1.3
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -29,6 +29,7 @@ static CGFloat gRimMul;        // rim brightness multiplier (clearer glass = bri
 static CGFloat gInner, gHot;   // inner edge glow 0…1, corner highlight 0…0.3
 static CGFloat gReflect;       // reflectivity of the glass (specular rim, sheen, streak, highlights) 0…1
 static CGFloat gEdgeDark;      // iOS 27-style darkened edge 0…1
+static CGFloat gDisp;          // chromatic fringe on the rim 0…1
 static CGFloat gBgBlur;        // full-screen backdrop blur: 1 = stock, lower = clearer
 static BOOL    gDebugDump;     // write a view-tree dump (for class-name diagnostics)
 static UIColor *gRimColor, *gFillColor;
@@ -109,15 +110,16 @@ static void LoadPrefs(void) {
     gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.9, 0.3, 2.5);
     gSheen         = (CGFloat)PrefDouble(@"sheen", 0.07, 0.0, 0.2);
     gTint          = (CGFloat)PrefDouble(@"fillTint", 0.0, 0.0, 0.3);
-    gInner         = (CGFloat)PrefDouble(@"innerRim", 0.5, 0.0, 1.0);
+    gInner         = (CGFloat)PrefDouble(@"innerRim", 0.1, 0.0, 1.0);
     gHot           = (CGFloat)PrefDouble(@"glow", 0.15, 0.0, 0.3);
     gGlass         = (CGFloat)PrefDouble(@"glassTint", 0.5, 0.0, 1.0);
     gMatAlpha      = 0.35 + 0.65 * gGlass;
     gEffTint       = MIN(0.5, 0.03 + 0.17 * gGlass + gTint);
     gRimMul        = 1.3 - 0.5 * gGlass;
-    gReflect       = (CGFloat)PrefDouble(@"reflect", 0.65, 0.0, 1.0);
+    gReflect       = (CGFloat)PrefDouble(@"reflect", 0.8, 0.0, 1.0);
     gEdgeDark      = (CGFloat)PrefDouble(@"edgeDark", 0.5, 0.0, 1.0);
     gBgBlur        = (CGFloat)PrefDouble(@"bgBlur", 1.0, 0.0, 1.0);
+    gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.5, 0.0, 1.0);
     gDebugDump     = PrefBool(@"debugDump", NO);
     gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
     gFillColor     = ColorNamed(PrefString(@"fillColor", @"white"));
@@ -143,10 +145,11 @@ static const void *kHotBRKey  = &kHotBRKey;   // corner highlight, bottom-right
 static const void *kBlurKey   = &kBlurKey;    // optional extra blur view
 static const void *kSigKey    = &kSigKey;
 static const void *kOutlineKey = &kOutlineKey; // dark hairline at the very edge
+static const void *kBevelAKey = &kBevelAKey;  // soft bevel highlight, inner (wide)
+static const void *kBevelBKey = &kBevelBKey;  // soft bevel highlight, outer (narrow)
 static const void *kStreakKey  = &kStreakKey;  // diagonal reflection band
 static const void *kShadeKey   = &kShadeKey;   // top-lit sphere shading (circles)
 static const void *kBgTimerKey = &kBgTimerKey; // on the window: backdrop re-check pending
-static const void *kBgBaseKey = &kBgBaseKey;   // alpha the system last set
 static const void *kBgTargetKey = &kBgTargetKey; // on the backdrop view: alpha we set
 static const void *kStyledKey = &kStyledKey; // set on views styled through a class hook
 static const void *kMenuKey   = &kMenuKey;   // set on views decorated by the menu walk
@@ -176,7 +179,7 @@ static CGFloat TargetRadius(CCKind kind, CGSize size) {
 
 static void HideDecor(UIView *v) {
     const void *keys[] = { kRimKey, kEdgeKey, kGlowKey, kSheenKey, kHotTLKey, kHotBRKey,
-                           kOutlineKey, kStreakKey, kShadeKey };
+                           kOutlineKey, kStreakKey, kShadeKey, kBevelAKey, kBevelBKey };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
         CALayer *l = objc_getAssociatedObject(v, keys[i]);
         l.hidden = YES;
@@ -223,6 +226,19 @@ static id RimColor(CGFloat alpha) {
     return (__bridge id)[gRimColor colorWithAlphaComponent:MAX(0.0, MIN(1.0, alpha))].CGColor;
 }
 
+// Rim colour with a slight cool / warm fringe (glass chromatic dispersion).
+static id RimColorD(CGFloat alpha, int warm) {
+    CGFloat r = 1, g = 1, b = 1, a = 1;
+    [gRimColor getRed:&r green:&g blue:&b alpha:&a];
+    CGFloat k = 0.30 * gDisp;
+    CGFloat tr = warm > 0 ? 1.0 : (warm < 0 ? 0.70 : r);
+    CGFloat tg = warm > 0 ? 0.82 : (warm < 0 ? 0.90 : g);
+    CGFloat tb = warm > 0 ? 0.68 : (warm < 0 ? 1.00 : b);
+    UIColor *c = [UIColor colorWithRed:r + (tr - r) * k green:g + (tg - g) * k blue:b + (tb - b) * k
+                                 alpha:MAX(0.0, MIN(1.0, alpha))];
+    return (__bridge id)c.CGColor;
+}
+
 // Liquid-glass decoration, modelled on the iOS 26 reference and the iOS 27 refinements
 // ("darkened edge" + "brighter specular highlights"):
 //  · dark hairline at the very edge, bright specular rim just inside it
@@ -254,6 +270,8 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     BOOL wantShade   = circle;
 
     CAGradientLayer *rim    = EnsureGradient(v, kRimKey,    @"IOS26CCRim",    1000, YES, NO,  wantRim);
+    CAGradientLayer *bevA   = EnsureGradient(v, kBevelAKey, @"IOS26CCBevelA",  996, YES, NO,  wantRim);
+    CAGradientLayer *bevB   = EnsureGradient(v, kBevelBKey, @"IOS26CCBevelB",  995, YES, NO,  wantRim);
     CAGradientLayer *edge   = EnsureGradient(v, kEdgeKey,   @"IOS26CCEdge",    990, YES, NO,  wantEdge);
     CAGradientLayer *hotTL  = EnsureGradient(v, kHotTLKey,  @"IOS26CCHotTL",   910, NO,  YES, wantHot);
     CAGradientLayer *hotBR  = EnsureGradient(v, kHotBRKey,  @"IOS26CCHotBR",   910, NO,  YES, wantHot);
@@ -306,8 +324,18 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     if (wantRim) {
         // Bright at the top-left and bottom-right, but never dark all the way around:
         // the reference keeps a continuous thin light edge.
+        // Same recipe as LiquidAss: a thin specular line, strong at two opposite corners,
+        // nearly clear in between ...
         ConfigureStroke(rim, b, radius, rimInset, gRimWidth,
-                        @[RimColor(0.95 * pk * rimE), RimColor(0.30 * rimE), RimColor(0.30 * rimE), RimColor(0.62 * pk * rimE)],
+                        @[RimColorD(1.0 * pk * rimE, -1), RimColor(0.16 * rimE), RimColor(0.16 * rimE), RimColorD(0.85 * pk * rimE, 1)],
+                        CGPointMake(0.0, 0.0), CGPointMake(1.0, 1.0));
+        // ... backed by two softer, wider strokes so the highlight fades inward like a bevel.
+        CGFloat bw = MIN(shortSide * 0.12, 7.0);
+        ConfigureStroke(bevA, b, radius, rimInset, MAX(2.0, bw * 0.55),
+                        @[RimColorD(0.40 * rs * rimE, -1), RimColor(0.0), RimColor(0.0), RimColorD(0.30 * rs * rimE, 1)],
+                        CGPointMake(0.0, 0.0), CGPointMake(1.0, 1.0));
+        ConfigureStroke(bevB, b, radius, rimInset, MAX(3.5, bw),
+                        @[RimColorD(0.17 * rs * rimE, -1), RimColor(0.0), RimColor(0.0), RimColorD(0.12 * rs * rimE, 1)],
                         CGPointMake(0.0, 0.0), CGPointMake(1.0, 1.0));
         // Second, fainter line just inside, lit from the opposite diagonal (edge refraction).
         ConfigureStroke(edge, b, radius, rimInset + gRimWidth + 1.1, 0.55,
@@ -323,7 +351,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
         glow.shadowPath = p.CGPath;
         glow.shadowColor = gRimColor.CGColor;
         glow.shadowRadius = MIN(10.0, MAX(3.0, shortSide * 0.16));
-        glow.shadowOpacity = (float)(0.85 * gInner);
+        glow.shadowOpacity = (float)(0.45 * gInner);
     }
 
     if (wantShade) {
@@ -458,34 +486,58 @@ static void DecorateMenus(UIView *container) {
 // The full-screen blur/dim behind the whole Control Center is a separate view from
 // the module materials. Find large material/backdrop-like views in the window and
 // scale their alpha with the "bgBlur" slider (1 = stock).
-static BOOL gInBgSet;
-static void (*orig_setAlpha_MT)(UIView *, SEL, CGFloat);
-static void new_setAlpha_MT(UIView *self, SEL _cmd, CGFloat a) {
-    if (!gInBgSet && objc_getAssociatedObject(self, kBgTargetKey)) {
-        objc_setAssociatedObject(self, kBgBaseKey, @(a), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        a *= gBgBlur;
+// The wallpaper blur is a CAFilter (gaussianBlur) inside the full-screen MTMaterialView's
+// layer tree. Scale its radius with the slider (1 = stock, 0 = sharp wallpaper).
+static const void *kBgOrigKey = &kBgOrigKey;   // on the filter: stock radius
+static const void *kBgSetKey  = &kBgSetKey;    // on the filter: radius we wrote last
+
+static NSString *const kRadiusKeys[] = { @"inputRadius", @"radius", @"inputBlurRadius", @"blurRadius" };
+
+static BOOL ScaleFilterRadius(id filter) {
+    BOOL changed = NO;
+    for (size_t i = 0; i < sizeof(kRadiusKeys) / sizeof(kRadiusKeys[0]); i++) {
+        id cur = nil;
+        @try { cur = [filter valueForKey:kRadiusKeys[i]]; } @catch (__unused NSException *e) { continue; }
+        if (![cur respondsToSelector:@selector(doubleValue)]) continue;
+        double now = [cur doubleValue];
+        NSNumber *lastSet = objc_getAssociatedObject(filter, kBgSetKey);
+        NSNumber *orig = objc_getAssociatedObject(filter, kBgOrigKey);
+        if (!orig || !lastSet || fabs(now - lastSet.doubleValue) > 0.01) {
+            orig = @(now);   // first sight, or the system changed it: this is the stock value
+            objc_setAssociatedObject(filter, kBgOrigKey, orig, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        double want = orig.doubleValue * gBgBlur;
+        if (fabs(now - want) > 0.01) {
+            @try { [filter setValue:@(want) forKey:kRadiusKeys[i]]; changed = YES; }
+            @catch (__unused NSException *e) {}
+        }
+        objc_setAssociatedObject(filter, kBgSetKey, @(want), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    orig_setAlpha_MT(self, _cmd, a);
+    return changed;
 }
-static void SetBgAlpha(UIView *s, CGFloat v) {
-    gInBgSet = YES;
-    s.alpha = v;
-    gInBgSet = NO;
+
+static void ScaleLayerBlur(CALayer *layer, int depth) {
+    if (!layer || depth > 6) return;
+    NSArray *f = layer.filters;
+    BOOL ch = NO;
+    for (id flt in f) ch |= ScaleFilterRadius(flt);
+    if (ch) layer.filters = f;
+    @try {
+        NSArray *bf = [layer valueForKey:@"backgroundFilters"];
+        if ([bf isKindOfClass:NSArray.class]) {
+            BOOL c2 = NO;
+            for (id flt in bf) c2 |= ScaleFilterRadius(flt);
+            if (c2) [layer setValue:bf forKey:@"backgroundFilters"];
+        }
+    } @catch (__unused NSException *e) {}
+    for (CALayer *sub in layer.sublayers) ScaleLayerBlur(sub, depth + 1);
 }
-// Called for every backdrop view found: keeps alpha = system alpha x slider.
+
 static void ScaleBackdrop(UIView *s) {
     BOOL flagged = objc_getAssociatedObject(s, kBgTargetKey) != nil;
-    if (gBgBlur < 0.999) {
-        if (!flagged) {
-            objc_setAssociatedObject(s, kBgBaseKey, @(s.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            objc_setAssociatedObject(s, kBgTargetKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-        CGFloat base = [objc_getAssociatedObject(s, kBgBaseKey) doubleValue];
-        if (fabs(s.alpha - base * gBgBlur) > 0.001) SetBgAlpha(s, base * gBgBlur);
-    } else if (flagged) {
-        CGFloat base = [objc_getAssociatedObject(s, kBgBaseKey) doubleValue];
-        objc_setAssociatedObject(s, kBgTargetKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        SetBgAlpha(s, base);
+    if (gBgBlur < 0.999 || flagged) {
+        ScaleLayerBlur(s.layer, 0);
+        objc_setAssociatedObject(s, kBgTargetKey, gBgBlur < 0.999 ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 }
 
@@ -595,7 +647,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     SetMaterialAlpha(v, 0, darkUI ? gMatAlpha : MAX(gMatAlpha, 0.7));
 
     if (kind == CCKindModuleFill) {
-        CGFloat ft = darkUI ? gEffTint : gEffTint * 0.45;
+        CGFloat ft = darkUI ? gEffTint * 0.2 : gEffTint * 0.85;
         v.backgroundColor = ft > 0.001 ? [gFillColor colorWithAlphaComponent:ft] : nil;
         ApplyExtraBlur(v, b);
     }
@@ -709,7 +761,6 @@ static void IOS26CCStyleInit(void) {
         Install_Round       ("CCUIRoundButton");
         Install_Slider      ("CCUIContinuousSliderView");
         Install_Stepped     ("CCUISteppedSliderView");
-        { IMP o = NULL; if (InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)new_setAlpha_MT, &o)) orig_setAlpha_MT = (void (*)(UIView *, SEL, CGFloat))o; }
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,
