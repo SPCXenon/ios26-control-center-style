@@ -3,12 +3,26 @@ name: Build rootless tweak
 on:
   workflow_dispatch:
   push:
+    branches-ignore:
+      - build-logs
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
+
+      - name: Apply patch
+        if: hashFiles('tools/apply_patch.py') != ''
+        run: |
+          python3 tools/apply_patch.py 2>&1 | tee "$RUNNER_TEMP/patch.log"
+          git diff --stat 2>&1 | tee -a "$RUNNER_TEMP/patch.log"
 
       - name: Install packaging tools
         run: brew install dpkg ldid xz
@@ -26,18 +40,60 @@ jobs:
           cp -R "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
 
       - name: Build package
-        run: make clean package FINALPACKAGE=1
+        run: make clean package FINALPACKAGE=1 2>&1 | tee "$RUNNER_TEMP/build.log"
 
       - name: Show package contents
         run: |
-          dpkg-deb -I packages/*.deb
-          dpkg-deb -c packages/*.deb
-          if dpkg-deb -c packages/*.deb | grep -q "var/jb/var/jb"; then echo "ERROR: double /var/jb prefix"; exit 1; fi
-          dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceBundles/IOS26CCStylePrefs.bundle/IOS26CCStylePrefs" || { echo "ERROR: prefs bundle missing"; exit 1; }
-          dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceLoader/Preferences/IOS26CCStyle.plist" || { echo "ERROR: PreferenceLoader entry missing"; exit 1; }
+          {
+            dpkg-deb -I packages/*.deb
+            dpkg-deb -c packages/*.deb
+            if dpkg-deb -c packages/*.deb | grep -q "var/jb/var/jb"; then echo "ERROR: double /var/jb prefix"; exit 1; fi
+            dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceBundles/IOS26CCStylePrefs.bundle/IOS26CCStylePrefs" || { echo "ERROR: prefs bundle missing"; exit 1; }
+            dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceLoader/Preferences/IOS26CCStyle.plist" || { echo "ERROR: PreferenceLoader entry missing"; exit 1; }
+          } 2>&1 | tee "$RUNNER_TEMP/package.log"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: IOS26CCStyle-rootless-deb-v0.1.4
-          path: packages/*.deb
+          path: |
+            packages/*.deb
+            Tweak.m
+            prefs/Resources/Root.plist
+
+      - name: Publish build log to build-logs branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        run: |
+          set +e
+          short="${GITHUB_SHA::7}"
+          repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          logrepo="$RUNNER_TEMP/logrepo"
+          rm -rf "$logrepo"
+          if ! git clone --depth 1 --branch build-logs "$repo_url" "$logrepo" 2>/dev/null; then
+            mkdir "$logrepo"
+            git -C "$logrepo" init -q -b build-logs
+            git -C "$logrepo" remote add origin "$repo_url"
+          fi
+          d="$logrepo/runs/${GITHUB_RUN_NUMBER}-${short}"
+          mkdir -p "$d"
+          {
+            echo "branch: ${GITHUB_REF_NAME}"
+            echo "commit: ${GITHUB_SHA}"
+            echo "status: ${RESULT}"
+            echo "run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > "$d/status.txt"
+          for f in patch build package; do
+            [ -f "$RUNNER_TEMP/$f.log" ] && tail -n 600 "$RUNNER_TEMP/$f.log" > "$d/$f.log"
+          done
+          rm -rf "$logrepo/latest"
+          mkdir -p "$logrepo/latest"
+          cp "$d"/* "$logrepo/latest/"
+          cd "$logrepo"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Build ${GITHUB_RUN_NUMBER} (${short}) ${RESULT}"
+          git push -q origin build-logs
