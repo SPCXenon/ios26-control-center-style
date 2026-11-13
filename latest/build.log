@@ -1,0 +1,25 @@
+[0;36m==> [1;39mCleaning…[m
+[1;31m> [1;3;39mMaking clean in prefs…[m
+[0;36m==> [1;39mCleaning…[m
+[0;36m==> [1;36mNotice:[m Build may be slow as Theos isn’t using all available CPU cores on this computer. Consider upgrading GNU Make: https://theos.dev/docs/parallel-building
+[1;31m> [1;3;39mMaking all for tweak IOS26CCStyle…[m
+[0;32m==> [1;39mCompiling Tweak.m (arm64e)…[m
+[0;33m==> [1;39mLinking tweak IOS26CCStyle (arm64e)…[m
+ld: warning: -multiply_defined is obsolete
+[0;34m==> [1;39mGenerating debug symbols for IOS26CCStyle…[m
+[0;34m==> [1;39mStripping IOS26CCStyle (arm64e)…[m
+[0;34m==> [1;39mSigning IOS26CCStyle…[m
+[1;31m> [1;3;39mMaking all in prefs…[m
+[0;36m==> [1;36mNotice:[m Build may be slow as Theos isn’t using all available CPU cores on this computer. Consider upgrading GNU Make: https://theos.dev/docs/parallel-building
+[1;31m> [1;3;39mMaking all for bundle IOS26CCStylePrefs…[m
+[0;35m==> [1;39mCopying resource directories into the bundle wrapper…[m
+[0;32m==> [1;39mCompiling IOS26CCRootListController.m (arm64e)…[m
+[0;33m==> [1;39mLinking bundle IOS26CCStylePrefs (arm64e)…[m
+ld: warning: -multiply_defined is obsolete
+[0;34m==> [1;39mGenerating debug symbols for IOS26CCStylePrefs…[m
+[0;34m==> [1;39mStripping IOS26CCStylePrefs (arm64e)…[m
+[0;34m==> [1;39mSigning IOS26CCStylePrefs…[m
+[1;31m> [1;3;39mMaking stage for tweak IOS26CCStyle…[m
+[1;31m> [1;3;39mMaking stage in prefs…[m
+[1;31m> [1;3;39mMaking stage for bundle IOS26CCStylePrefs…[m
+dm.pl: building package `com.xenon.ios26ccstyle:iphoneos-arm64' in `./packages/com.xenon.ios26ccstyle_0.1.4_iphoneos-arm64.deb'

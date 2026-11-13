@@ -1,0 +1,13 @@
+[ ok ] reduce transparency in LoadPrefs
+[ ok ] EffBgBlur helper
+[ ok ] filter radius uses EffBgBlur
+[ ok ] ScaleBackdrop uses EffBgBlur (2 places)
+[ ok ] debounced PrefsChanged
+[ ok ] LogHookHierarchy definition
+[ ok ] LogHookHierarchy call
+[ ok ] Reduce Transparency observer
+[ ok ] Root.plist sheen default 0.1 -> 0.07
+Done. Backups: Tweak.m.orig, Root.plist.orig
+ Tweak.m                    | 78 +++++++++++++++++++++++++++++++++++++++-------
+ prefs/Resources/Root.plist |  2 +-
+ 2 files changed, 67 insertions(+), 13 deletions(-)
