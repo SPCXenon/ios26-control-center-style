@@ -39,5 +39,5 @@ jobs:
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: IOS26CCStyle-rootless-deb
+          name: IOS26CCStyle-rootless-deb-v0.1.4
           path: packages/*.deb

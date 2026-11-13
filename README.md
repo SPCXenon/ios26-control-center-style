@@ -1,8 +1,8 @@
-# iOS 26 Control Center Style 0.1.3
+# iOS 26 Control Center Style 0.1.4
 
 Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 
-Hooks only the Control Center classes via the ObjC runtime (no global UIView hook, no CydiaSubstrate). The header pocket (top oval) is not styled. The 0.4.2 source is kept as `old-Tweak-0.4.2.x.txt`.
+Hooks only selected Control Center view classes via the ObjC runtime, including the header pocket and module views. Classes missing on the current iOS version are logged and skipped. It does not hook `UIView` globally or change inherited superclass implementations. Runtime class-name checks are cached per class, and style layers are recalculated only when geometry, radius, appearance, or visual preferences change. Layer mutations disable implicit Core Animation actions to avoid layout-time animation drift; the rim is raised above newly added subviews. No CydiaSubstrate dependency. The 0.4.2 source is kept as `old-Tweak-0.4.2.x.txt`.
 
 ## Glass layers (per module / button / slider)
 Expanded menus (Wi-Fi, Focus, brightness, ...) get the same glass layers: every rounded, clipping view inside a module container is decorated using its own system radius. Switch: "Expanded menus".
@@ -19,4 +19,4 @@ Prefs domain `com.xenon.ios26ccstyle`: enabled, styleModules, styleButtons, styl
 
 ## Build
 arm64e needs Apple's linker, so build with GitHub Actions (**Build rootless tweak**, every push). The workflow installs the Theos iOS 16.5 SDK (it contains the private `Preferences` framework stub) and fails if the package has a double `/var/jb` prefix or lacks the prefs bundle.
-Download the `IOS26CCStyle-rootless-deb` artifact, install with Sileo/Filza, respring.
+Download the `IOS26CCStyle-rootless-deb-v0.1.4` artifact, extract the `.deb`, install with Sileo/Filza, and respring.
