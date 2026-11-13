@@ -1,4 +1,4 @@
-# iOS 26 Control Center Style 0.1.1
+# iOS 26 Control Center Style 0.1.2
 
 Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 

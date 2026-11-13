@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.1.1
+// IOS26CCStyle 0.1.2
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -107,7 +107,7 @@ static void LoadPrefs(void) {
     gMaxRadius     = (CGFloat)PrefDouble(@"maxRadius", 46.0, 16.0, 70.0);
     gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.9, 0.0, 1.0);
     gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.9, 0.3, 2.5);
-    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.10, 0.0, 0.2);
+    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.07, 0.0, 0.2);
     gTint          = (CGFloat)PrefDouble(@"fillTint", 0.0, 0.0, 0.3);
     gInner         = (CGFloat)PrefDouble(@"innerRim", 0.5, 0.0, 1.0);
     gHot           = (CGFloat)PrefDouble(@"glow", 0.15, 0.0, 0.3);
@@ -146,6 +146,7 @@ static const void *kOutlineKey = &kOutlineKey; // dark hairline at the very edge
 static const void *kStreakKey  = &kStreakKey;  // diagonal reflection band
 static const void *kShadeKey   = &kShadeKey;   // top-lit sphere shading (circles)
 static const void *kBgTimerKey = &kBgTimerKey; // on the window: backdrop re-check pending
+static const void *kBgBaseKey = &kBgBaseKey;   // alpha the system last set
 static const void *kBgTargetKey = &kBgTargetKey; // on the backdrop view: alpha we set
 static const void *kStyledKey = &kStyledKey; // set on views styled through a class hook
 static const void *kMenuKey   = &kMenuKey;   // set on views decorated by the menu walk
@@ -228,7 +229,15 @@ static id RimColor(CGFloat alpha) {
 //  · second, refracted inner rim · inner edge glow (bevel) · top sheen
 //  · diagonal reflection streak · corner highlights · top-lit shading on circles
 // Every piece is a plain CALayer (they never take touches).
+// System appearance of the view (Control Center follows light/dark mode).
+static BOOL IsDarkUI(UIView *v) {
+    UIUserInterfaceStyle st = v.window.traitCollection.userInterfaceStyle;
+    if (st == UIUserInterfaceStyleUnspecified) st = v.traitCollection.userInterfaceStyle;
+    return st != UIUserInterfaceStyleLight;
+}
+
 static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
+    BOOL dark = IsDarkUI(v);
     CGFloat shortSide = MIN(b.size.width, b.size.height);
     BOOL circle = fabs(b.size.width - b.size.height) < 2.0 && radius >= shortSide / 2.0 - 0.5;
     CGFloat rs   = gReflect * 2.0;                 // 0…2, 1 = neutral
@@ -276,8 +285,8 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     glow.hidden = !wantGlow;
     if (glow && glow.superlayer != v.layer) [v.layer addSublayer:glow];
 
-    NSString *sig = [NSString stringWithFormat:@"%lu|%.1f|%.1f|%.2f",
-                     (unsigned long)gGeneration, b.size.width, b.size.height, radius];
+    NSString *sig = [NSString stringWithFormat:@"%lu|%.1f|%.1f|%.2f|%d",
+                     (unsigned long)gGeneration, b.size.width, b.size.height, radius, dark];
     if ([objc_getAssociatedObject(v, kSigKey) isEqualToString:sig]) return;
     objc_setAssociatedObject(v, kSigKey, sig, OBJC_ASSOCIATION_COPY_NONATOMIC);
 
@@ -288,7 +297,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
 
     if (wantOutline) {
         outline.frame = b;
-        outline.strokeColor = [UIColor colorWithWhite:0.0 alpha:MIN(0.6, 0.38 * gEdgeDark)].CGColor;
+        outline.strokeColor = [UIColor colorWithWhite:0.0 alpha:MIN(0.6, (dark ? 0.38 : 0.20) * gEdgeDark)].CGColor;
         outline.lineWidth = 0.7;
         outline.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(outline.bounds, 0.35, 0.35)
                                                   cornerRadius:MAX(0.0, radius - 0.35)].CGPath;
@@ -326,12 +335,12 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
         shade.colors = @[
             (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.0].CGColor,
             (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.0].CGColor,
-            (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.20].CGColor,
+            (__bridge id)[UIColor colorWithWhite:0.0 alpha:dark ? 0.20 : 0.09].CGColor,
         ];
     }
 
     if (wantSheen) {
-        CGFloat a = MIN(0.3, gSheen * rs);
+        CGFloat a = MIN(0.3, gSheen * rs * (dark ? 0.8 : 1.3));
         sheen.frame = b;
         sheen.startPoint = CGPointMake(0.5, 0.0);
         sheen.endPoint = CGPointMake(0.5, 1.0);
@@ -345,7 +354,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
 
     if (wantStreak) {
         // Soft diagonal reflection band across the upper-left of the glass.
-        CGFloat a = MIN(0.30, 0.09 * rs);
+        CGFloat a = MIN(0.30, (dark ? 0.05 : 0.14) * rs);
         CGColorRef clear = [UIColor colorWithWhite:1.0 alpha:0.0].CGColor;
         streak.frame = b;
         streak.startPoint = CGPointMake(0.0, 0.0);
@@ -357,7 +366,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     }
 
     if (wantHot) {
-        CGFloat a = MIN(0.7, gHot * 2.5 * rs * (circle ? 1.7 : 1.0));
+        CGFloat a = MIN(0.7, gHot * (dark ? 1.8 : 2.5) * rs * (circle ? 1.7 : 1.0));
         NSArray *cols = @[(__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
                           (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
         hotTL.frame = b;
@@ -449,6 +458,37 @@ static void DecorateMenus(UIView *container) {
 // The full-screen blur/dim behind the whole Control Center is a separate view from
 // the module materials. Find large material/backdrop-like views in the window and
 // scale their alpha with the "bgBlur" slider (1 = stock).
+static BOOL gInBgSet;
+static void (*orig_setAlpha_MT)(UIView *, SEL, CGFloat);
+static void new_setAlpha_MT(UIView *self, SEL _cmd, CGFloat a) {
+    if (!gInBgSet && objc_getAssociatedObject(self, kBgTargetKey)) {
+        objc_setAssociatedObject(self, kBgBaseKey, @(a), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        a *= gBgBlur;
+    }
+    orig_setAlpha_MT(self, _cmd, a);
+}
+static void SetBgAlpha(UIView *s, CGFloat v) {
+    gInBgSet = YES;
+    s.alpha = v;
+    gInBgSet = NO;
+}
+// Called for every backdrop view found: keeps alpha = system alpha x slider.
+static void ScaleBackdrop(UIView *s) {
+    BOOL flagged = objc_getAssociatedObject(s, kBgTargetKey) != nil;
+    if (gBgBlur < 0.999) {
+        if (!flagged) {
+            objc_setAssociatedObject(s, kBgBaseKey, @(s.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(s, kBgTargetKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        CGFloat base = [objc_getAssociatedObject(s, kBgBaseKey) doubleValue];
+        if (fabs(s.alpha - base * gBgBlur) > 0.001) SetBgAlpha(s, base * gBgBlur);
+    } else if (flagged) {
+        CGFloat base = [objc_getAssociatedObject(s, kBgBaseKey) doubleValue];
+        objc_setAssociatedObject(s, kBgTargetKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        SetBgAlpha(s, base);
+    }
+}
+
 static BOOL IsBgCandidate(UIView *s, UIWindow *w) {
     CGSize ws = w.bounds.size;
     if (s.bounds.size.width < ws.width * 0.9 || s.bounds.size.height < ws.height * 0.9) return NO;
@@ -474,12 +514,7 @@ static void WalkBg(UIView *root, UIWindow *w, int depth, int *budget, NSMutableS
         }
         if (!big) continue;
         if (IsBgCandidate(s, w)) {
-            BOOL touched = objc_getAssociatedObject(s, kBgTargetKey) != nil;
-            if (gBgBlur < 0.999 || touched) {
-                if (fabs(s.alpha - gBgBlur) > 0.001) s.alpha = gBgBlur;
-                objc_setAssociatedObject(s, kBgTargetKey, gBgBlur < 0.999 ? @YES : nil,
-                                         OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            }
+            ScaleBackdrop(s);
             continue;
         }
         WalkBg(s, w, depth + 1, budget, dump);
@@ -556,10 +591,12 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     layer.masksToBounds = YES;
     layer.borderWidth   = 0.0;
 
-    SetMaterialAlpha(v, 0, gMatAlpha);
+    BOOL darkUI = IsDarkUI(v);
+    SetMaterialAlpha(v, 0, darkUI ? gMatAlpha : MAX(gMatAlpha, 0.7));
 
     if (kind == CCKindModuleFill) {
-        v.backgroundColor = gEffTint > 0.001 ? [gFillColor colorWithAlphaComponent:gEffTint] : nil;
+        CGFloat ft = darkUI ? gEffTint : gEffTint * 0.45;
+        v.backgroundColor = ft > 0.001 ? [gFillColor colorWithAlphaComponent:ft] : nil;
         ApplyExtraBlur(v, b);
     }
 
@@ -672,6 +709,7 @@ static void IOS26CCStyleInit(void) {
         Install_Round       ("CCUIRoundButton");
         Install_Slider      ("CCUIContinuousSliderView");
         Install_Stepped     ("CCUISteppedSliderView");
+        { IMP o = NULL; if (InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)new_setAlpha_MT, &o)) orig_setAlpha_MT = (void (*)(UIView *, SEL, CGFloat))o; }
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,
