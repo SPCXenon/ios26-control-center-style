@@ -1,0 +1,32 @@
+ new Debian package, version 2.0.
+ size 33660 bytes: control archive=381 bytes.
+     364 bytes,    10 lines      control
+ Package: com.xenon.ios26ccstyle
+ Name: iOS 26 Control Center Style
+ Description: Liquid Glass look for the iOS 18 Control Center: capsule corners, specular rim, inner glass glow and a Settings page.
+ Maintainer: Codex
+ Author: Codex
+ Section: Tweaks
+ Depends: firmware (>= 18.0), ellekit, preferenceloader
+ Architecture: iphoneos-arm64
+ Version: 0.1.4
+ Installed-Size: 208
+drwxr-xr-x root/wheel        0 2026-11-13 21:15 .
+drwxr-xr-x root/wheel        0 2026-11-13 21:15 var
+drwxr-xr-x root/wheel        0 2026-11-13 21:15 var/jb
+drwxr-xr-x root/wheel        0 2026-11-13 21:15 var/jb/Library
+drwxr-xr-x root/wheel        0 2026-11-13 21:15 var/jb/Library/MobileSubstrate
+drwxr-xr-x root/wheel        0 2026-11-13 21:15 var/jb/Library/MobileSubstrate/DynamicLibraries
+-rwxr-xr-x root/wheel    90816 2026-11-13 21:15 var/jb/Library/MobileSubstrate/DynamicLibraries/IOS26CCStyle.dylib
+-rw-r--r-- root/wheel       93 2026-11-13 21:15 var/jb/Library/MobileSubstrate/DynamicLibraries/IOS26CCStyle.plist
+drwxr-xr-x root/wheel        0 2026-11-13 21:15 var/jb/Library/PreferenceBundles
+drwxr-xr-x root/wheel        0 2026-11-13 21:15 var/jb/Library/PreferenceBundles/IOS26CCStylePrefs.bundle
+-rwxr-xr-x root/wheel    68384 2026-11-13 21:15 var/jb/Library/PreferenceBundles/IOS26CCStylePrefs.bundle/IOS26CCStylePrefs
+-rw-r--r-- root/wheel      393 2026-11-13 21:15 var/jb/Library/PreferenceBundles/IOS26CCStylePrefs.bundle/Info.plist
+-rw-r--r-- root/wheel     3545 2026-11-13 21:15 var/jb/Library/PreferenceBundles/IOS26CCStylePrefs.bundle/Root.plist
+-rw-r--r-- root/wheel     1675 2026-11-13 21:14 var/jb/Library/PreferenceBundles/IOS26CCStylePrefs.bundle/icon.png
+-rw-r--r-- root/wheel     4271 2026-11-13 21:14 var/jb/Library/PreferenceBundles/IOS26CCStylePrefs.bundle/icon@2x.png
+-rw-r--r-- root/wheel     7127 2026-11-13 21:14 var/jb/Library/PreferenceBundles/IOS26CCStylePrefs.bundle/icon@3x.png
+drwxr-xr-x root/wheel        0 2026-11-13 21:14 var/jb/Library/PreferenceLoader
+drwxr-xr-x root/wheel        0 2026-11-13 21:14 var/jb/Library/PreferenceLoader/Preferences
+-rw-r--r-- root/wheel      207 2026-11-13 21:15 var/jb/Library/PreferenceLoader/Preferences/IOS26CCStyle.plist
