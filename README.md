@@ -1,4 +1,4 @@
-# iOS 26 Control Center Style 0.9.0
+# iOS 26 Control Center Style 0.10.0
 
 Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 
@@ -15,7 +15,7 @@ A master slider (Settings > iOS 26 CC Style > Liquid Glass) runs from ultra clea
 ## Settings
 Settings → **iOS 26 CC Style** (PreferenceLoader preference bundle). Changes apply live; **Respring** button at the bottom.
 
-Prefs domain `com.codex.ios26ccstyle`: enabled, styleModules, styleButtons, styleSliders, continuousCorners, sliderCapsule, maxRadius, rimColor, rimIntensity, rimWidth, fillColor, fillTint, sheen, innerRim, glow, extraBlur. Darwin notification: `com.codex.ios26ccstyle/reload`.
+Prefs domain `com.codex.ios26ccstyle`: enabled, styleModules, styleButtons, styleSliders, continuousCorners, sliderCapsule, maxRadius, rimColor, rimIntensity, rimWidth, fillColor, fillTint, sheen, innerRim, glow, extraBlur, bgBlur, reflect, edgeDark, debugDump. Darwin notification: `com.codex.ios26ccstyle/reload`.
 
 ## Build
 arm64e needs Apple's linker, so build with GitHub Actions (**Build rootless tweak**, every push). The workflow installs the Theos iOS 16.5 SDK (it contains the private `Preferences` framework stub) and fails if the package has a double `/var/jb` prefix or lacks the prefs bundle.
