@@ -11,8 +11,8 @@
 #import <objc/runtime.h>
 #import <notify.h>
 
-static NSString *const kPrefsDomain = @"com.codex.ios26ccstyle";
-static NSString *const kReloadNotification = @"com.codex.ios26ccstyle/reload";
+static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
+static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
 
 // MARK: - Preferences ---------------------------------------------------------
 

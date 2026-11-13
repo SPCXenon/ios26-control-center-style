@@ -14,13 +14,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>enabled</string>
 			<key>label</key>
@@ -36,13 +36,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>0.5</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -62,13 +62,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>styleModules</string>
 			<key>label</key>
@@ -76,13 +76,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>styleButtons</string>
 			<key>label</key>
@@ -90,13 +90,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>styleSliders</string>
 			<key>label</key>
@@ -104,13 +104,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>styleMenus</string>
 			<key>label</key>
@@ -124,13 +124,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>continuousCorners</string>
 			<key>label</key>
@@ -138,13 +138,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>sliderCapsule</string>
 			<key>label</key>
@@ -160,13 +160,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>46.0</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -186,13 +186,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSLinkListCell</string>
 			<key>default</key>
 			<string>white</string>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>detail</key>
 			<string>PSListItemsController</string>
 			<key>key</key>
@@ -232,13 +232,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>0.9</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -258,13 +258,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>0.9</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -284,13 +284,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSLinkListCell</string>
 			<key>default</key>
 			<string>white</string>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>detail</key>
 			<string>PSListItemsController</string>
 			<key>key</key>
@@ -330,13 +330,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>0.0</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -358,13 +358,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>0.1</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -392,13 +392,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>0.5</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -420,13 +420,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>0.15</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -448,13 +448,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>extraBlur</string>
 			<key>label</key>
@@ -486,13 +486,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>1.0</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -514,13 +514,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>0.65</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -542,13 +542,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
 			<real>0.5</real>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
@@ -570,13 +570,13 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.codex.ios26ccstyle/reload</string>
+			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.codex.ios26ccstyle</string>
+			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>debugDump</string>
 			<key>label</key>
@@ -586,7 +586,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>iOS 26 Control Center Style 0.10.1</string>
+			<string>iOS 26 Control Center Style 0.1.1</string>
 			<key>label</key>
 			<string>About</string>
 		</dict>

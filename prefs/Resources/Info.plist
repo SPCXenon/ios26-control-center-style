@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>IOS26CCStylePrefs</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.codex.ios26ccstyle.prefs</string>
+	<string>com.xenon.ios26ccstyle.prefs</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.10.1</string>
+	<string>0.1.1</string>
 	<key>CFBundleVersion</key>
-	<string>0.10.1</string>
+	<string>0.1.1</string>
 	<key>NSPrincipalClass</key>
 	<string>IOS26CCRootListController</string>
 </dict>
