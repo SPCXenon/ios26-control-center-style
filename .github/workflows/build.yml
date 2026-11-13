@@ -23,6 +23,7 @@ jobs:
         run: |
           python3 tools/apply_patch.py 2>&1 | tee "$RUNNER_TEMP/patch.log"
           git diff --stat 2>&1 | tee -a "$RUNNER_TEMP/patch.log"
+          rm -f Tweak.m.orig prefs/Resources/Root.plist.orig
 
       - name: Install packaging tools
         run: brew install dpkg ldid xz
@@ -46,10 +47,11 @@ jobs:
         run: |
           {
             dpkg-deb -I packages/*.deb
-            dpkg-deb -c packages/*.deb
-            if dpkg-deb -c packages/*.deb | grep -q "var/jb/var/jb"; then echo "ERROR: double /var/jb prefix"; exit 1; fi
-            dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceBundles/IOS26CCStylePrefs.bundle/IOS26CCStylePrefs" || { echo "ERROR: prefs bundle missing"; exit 1; }
-            dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceLoader/Preferences/IOS26CCStyle.plist" || { echo "ERROR: PreferenceLoader entry missing"; exit 1; }
+            package_contents="$(dpkg-deb -c packages/*.deb)"
+            printf '%s\n' "$package_contents"
+            if grep -q "var/jb/var/jb" <<<"$package_contents"; then echo "ERROR: double /var/jb prefix"; exit 1; fi
+            grep -q "Library/PreferenceBundles/IOS26CCStylePrefs.bundle/IOS26CCStylePrefs" <<<"$package_contents" || { echo "ERROR: prefs bundle missing"; exit 1; }
+            grep -q "Library/PreferenceLoader/Preferences/IOS26CCStyle.plist" <<<"$package_contents" || { echo "ERROR: PreferenceLoader entry missing"; exit 1; }
           } 2>&1 | tee "$RUNNER_TEMP/package.log"
 
       - name: Upload package
