@@ -453,19 +453,26 @@ static BOOL IsBgCandidate(UIView *s, UIWindow *w) {
     CGSize ws = w.bounds.size;
     if (s.bounds.size.width < ws.width * 0.9 || s.bounds.size.height < ws.height * 0.9) return NO;
     NSString *n = NSStringFromClass(s.class);
-    if ([n containsString:@"CCUIContentModule"]) return NO;
-    return [n containsString:@"Material"] || [n containsString:@"Backdrop"] ||
-           [n containsString:@"Blur"] || [n isEqualToString:@"UIVisualEffectView"];
+    if ([n hasPrefix:@"CCUI"] || [n containsString:@"IconList"] || [n containsString:@"ScrollView"]) return NO;
+    if ([n containsString:@"Material"] || [n containsString:@"Backdrop"] || [n containsString:@"Blur"] ||
+        [n containsString:@"Background"] || [n isEqualToString:@"UIVisualEffectView"]) return YES;
+    return [NSStringFromClass(s.layer.class) containsString:@"Backdrop"];
 }
 
+// Only near-full-screen views can be (or contain) the backdrop, so small subtrees
+// (modules, icons) are never entered and the walk stays cheap.
 static void WalkBg(UIView *root, UIWindow *w, int depth, int *budget, NSMutableString *dump) {
-    if (depth > 7 || *budget <= 0) return;
+    if (depth > 10 || *budget <= 0) return;
+    CGSize ws = w.bounds.size;
     for (UIView *s in root.subviews) {
         if ((*budget)-- <= 0) return;
+        BOOL big = s.bounds.size.width >= ws.width * 0.9 && s.bounds.size.height >= ws.height * 0.9;
         if (dump) {
-            [dump appendFormat:@"%*s%@ %@ a=%.2f r=%.1f\n", depth * 2, "", NSStringFromClass(s.class),
-             NSStringFromCGRect(s.frame), s.alpha, s.layer.cornerRadius];
+            [dump appendFormat:@"%*s%@ [layer %@] %@ a=%.2f hidden=%d subviews=%lu%@\n", depth * 2, "",
+             NSStringFromClass(s.class), NSStringFromClass(s.layer.class), NSStringFromCGRect(s.frame),
+             s.alpha, s.hidden, (unsigned long)s.subviews.count, big ? @"" : @" (not entered)"];
         }
+        if (!big) continue;
         if (IsBgCandidate(s, w)) {
             BOOL touched = objc_getAssociatedObject(s, kBgTargetKey) != nil;
             if (gBgBlur < 0.999 || touched) {
@@ -494,7 +501,7 @@ static void ApplyBackground(UIView *v) {
         dump = [NSMutableString stringWithFormat:@"window %@ %@\n", NSStringFromClass(w.class),
                 NSStringFromCGRect(w.bounds)];
     }
-    int budget = 600;
+    int budget = 1500;
     WalkBg(w, w, 0, &budget, dump);
     if (dump) {
         [dump writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-dump.txt" atomically:YES
