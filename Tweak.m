@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.1
+// IOS26CCStyle 0.2.2
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -801,6 +801,58 @@ static void SyncGlass(UIView *v, CCKind kind, CGFloat radius, BOOL dark, BOOL en
     SyncGlassIn(v, want, radius, dark, 0);
 }
 
+
+// Enabled (selected) toggles: iOS 18 shows them as a nearly opaque white fill drawn by a
+// child of the button module, which hides the glass behind it. Round it like the shell and
+// let the backdrop show through (iOS 26 "on" tiles are frosted, not solid).
+static const void *kOnFillKey = &kOnFillKey;   // on the fill view: its stock alpha
+
+static BOOL LooksLikeOnFill(UIView *s, CGSize parent) {
+    NSString *n = NSStringFromClass(s.class);
+    if ([n hasPrefix:@"XC"] || [n containsString:@"Material"] || [n containsString:@"Slider"] ||
+        [n containsString:@"Label"] || [n containsString:@"Image"] || [n containsString:@"Glyph"] ||
+        [n containsString:@"ContentModuleBackground"]) return NO;
+    if (s.bounds.size.width < parent.width * 0.9 || s.bounds.size.height < parent.height * 0.9) return NO;
+    if ([n containsString:@"Highlight"] || [n containsString:@"Selected"] || [n containsString:@"Background"]) return YES;
+    CGFloat w = 0, a = 0;
+    UIColor *c = s.backgroundColor;
+    return c && [c getWhite:&w alpha:&a] && w > 0.7 && a > 0.3;
+}
+
+static void StyleOnFills(UIView *v, CGFloat radius, BOOL dark, NSMutableString *dump, int depth) {
+    if (depth > 3) return;
+    for (UIView *s in v.subviews) {
+        if (dump) {
+            [dump appendFormat:@"%*s%@ %@ a=%.2f hidden=%d bg=%@ comp=%@\n", depth * 2, "", NSStringFromClass(s.class),
+             NSStringFromCGRect(s.frame), s.alpha, s.hidden, s.backgroundColor, s.layer.compositingFilter];
+        }
+        if (LooksLikeOnFill(s, v.bounds.size)) {
+            NSNumber *orig = objc_getAssociatedObject(s, kOnFillKey);
+            if (!orig) { orig = @(s.alpha); objc_setAssociatedObject(s, kOnFillKey, orig, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+            s.layer.cornerCurve = gContinuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
+            s.layer.cornerRadius = radius;
+            s.layer.masksToBounds = YES;
+            CGFloat want = orig.doubleValue * (dark ? 0.55 : 0.72) * (0.55 + 0.45 * (1.0 - gGlass));
+            if (fabs(s.alpha - want) > 0.01 && !gEnabled) want = orig.doubleValue;
+            if (fabs(s.alpha - want) > 0.01) s.alpha = want;
+            continue;
+        }
+        if (s.subviews.count && s.bounds.size.width * s.bounds.size.height > 400) StyleOnFills(s, radius, dark, dump, depth + 1);
+    }
+}
+
+static void StyleOnFillsTop(UIView *v, CGFloat radius, BOOL dark) {
+    static NSUInteger dumpGen = (NSUInteger)-1;
+    NSMutableString *dump = nil;
+    if (gDebugDump && dumpGen != gGeneration && v.bounds.size.height < 120) {
+        dumpGen = gGeneration;
+        dump = [NSMutableString stringWithFormat:@"module %@ %@ r=%.1f\n", NSStringFromClass(v.class), NSStringFromCGRect(v.bounds), radius];
+    }
+    StyleOnFills(v, radius, dark, dump, 1);
+    if (dump) [dump writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt" atomically:YES
+                       encoding:NSUTF8StringEncoding error:NULL];
+}
+
 static void ApplyStyle(UIView *v, CCKind kind) {
     if (!v.window) return;
     ApplyBackground(v);
@@ -859,6 +911,8 @@ static void ApplyStyle(UIView *v, CCKind kind) {
         v.backgroundColor = ft > 0.001 ? [gFillColor colorWithAlphaComponent:ft] : nil;
         ApplyExtraBlur(v, b);
     }
+
+    if (kind == CCKindModule) StyleOnFillsTop(v, r, darkUI);
 
     ApplyDecor(v, b, r);
 

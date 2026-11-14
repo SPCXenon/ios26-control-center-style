@@ -51,8 +51,9 @@ void *LGSymStripData(void *dataAddr) {
 static void rlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 extern bool gLGBackboardDebugLogging;
 
+static bool g_forceLog = false;
 static void rlog(const char *fmt, ...) {
-    if (!gLGBackboardDebugLogging) return;
+    if (!gLGBackboardDebugLogging && !g_forceLog) return;
     FILE *f = fopen(LG_LOG_PATH, "a");
     if (!f) return;
     fputs("[LGSYM] ", f);
@@ -591,6 +592,17 @@ int LGResolve_EdgeInfoVtableSlot(void * const *vtable, int maxSlots) {
             return i;
         }
     }
+    // Pattern did not match this QuartzCore build: dump every slot so it can be re-derived.
+    g_forceLog = true;
+    for (int i = 0; i < maxSlots; i++) {
+        uint32_t *fn = (uint32_t *)LGSymStripCode(vtable[i]);
+        if (!fn) { rlog("vt[%d] null", i); continue; }
+        char buf[700]; int n = 0;
+        n += snprintf(buf + n, sizeof(buf) - n, "vt[%d] %p qci=%d:", i, (void *)fn, LGSymAddressInQuartzCoreImage((void *)fn));
+        for (int k = 0; k < 48 && n < (int)sizeof(buf) - 10; k++) n += snprintf(buf + n, sizeof(buf) - n, " %08x", fn[k]);
+        rlog("%s", buf);
+    }
+    g_forceLog = false;
     rlog("edge-info-slot: get_edge_info not found (checked %d slots)", maxSlots);
     return -1;
 }
