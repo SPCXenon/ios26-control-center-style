@@ -35,6 +35,8 @@ jobs:
           if dpkg-deb -c packages/*.deb | grep -q "var/jb/var/jb"; then echo "ERROR: double /var/jb prefix"; exit 1; fi
           dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceBundles/IOS26CCStylePrefs.bundle/IOS26CCStylePrefs" || { echo "ERROR: prefs bundle missing"; exit 1; }
           dpkg-deb -c packages/*.deb | grep -q "Library/PreferenceLoader/Preferences/IOS26CCStyle.plist" || { echo "ERROR: PreferenceLoader entry missing"; exit 1; }
+          dpkg-deb -c packages/*.deb | grep -q "MobileSubstrate/DynamicLibraries/IOS26CCBackboardd.dylib" || { echo "ERROR: backboardd dylib missing"; exit 1; }
+          dpkg-deb -c packages/*.deb | grep -q "MobileSubstrate/DynamicLibraries/IOS26CCBackboardd.plist" || { echo "ERROR: backboardd filter plist missing"; exit 1; }
 
       - name: Upload package
         uses: actions/upload-artifact@v4
