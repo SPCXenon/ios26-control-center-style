@@ -39,7 +39,8 @@ jobs:
           dpkg-deb -c packages/*.deb | grep -q "MobileSubstrate/DynamicLibraries/IOS26CCBackboardd.plist" || { echo "ERROR: backboardd filter plist missing"; exit 1; }
 
       - name: Read version
-        run: echo "PKG_VERSION=$(sed -n 's/^Version: //p' control)" >> "$GITHUB_ENV"
+        run: |
+          echo "PKG_VERSION=$(awk '/^Version/ {print $2}' control)" >> "$GITHUB_ENV"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
