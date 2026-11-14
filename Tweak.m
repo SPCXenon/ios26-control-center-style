@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.1.4
+// IOS26CCStyle 0.2.0
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -11,6 +11,8 @@
 #import <objc/runtime.h>
 #import <notify.h>
 #include <stdlib.h>
+#include <unistd.h>
+#import <objc/message.h>
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
@@ -32,6 +34,7 @@ static CGFloat gReflect;       // reflectivity of the glass (specular rim, sheen
 static CGFloat gEdgeDark;      // iOS 27-style darkened edge 0…1
 static CGFloat gDisp;          // chromatic fringe on the rim 0…1
 static CGFloat gBgBlur;        // full-screen backdrop blur: 1 = stock, lower = clearer
+static BOOL    gRefract;       // real refraction glass via the backboardd renderer
 static BOOL    gDebugDump;     // write a view-tree dump (for class-name diagnostics)
 static UIColor *gRimColor, *gFillColor;
 static NSUInteger gGeneration;      // prefs/background diagnostics generation
@@ -124,6 +127,7 @@ static void LoadPrefs(void) {
     gBgBlur        = (CGFloat)PrefDouble(@"bgBlur", 1.0, 0.0, 1.0);
     gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.5, 0.0, 1.0);
     gDebugDump     = PrefBool(@"debugDump", NO);
+    gRefract       = PrefBool(@"refraction", YES);
     NSString *rimColorName = PrefString(@"rimColor", @"white");
     NSString *fillColorName = PrefString(@"fillColor", @"white");
     gRimColor      = ColorNamed(rimColorName);
@@ -132,9 +136,9 @@ static void LoadPrefs(void) {
     // This settings-only signature avoids invalidating per-view caches for
     // diagnostic-only preference changes such as toggling the view-tree dump.
     NSString *styleSignature = [NSString stringWithFormat:
-        @"%d|%d|%d|%d|%d|%d|%d|%d|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%@|%@",
+        @"%d|%d|%d|%d|%d|%d|%d|%d|%d|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%@|%@",
         gEnabled, gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus,
-        gSliderCapsule, gContinuous, gExtraBlur, gMaxRadius, gRim, gRimWidth,
+        gSliderCapsule, gContinuous, gExtraBlur, gRefract, gMaxRadius, gRim, gRimWidth,
         gSheen, gTint, gInner, gHot, gGlass, gMatAlpha, gEffTint, gRimMul,
         gReflect, gEdgeDark, gBgBlur, gDisp, rimColorName, fillColorName];
     if (![gLastStyleSignature isEqualToString:styleSignature]) {
@@ -723,6 +727,182 @@ static void ApplyBackground(UIView *v) {
     }
 }
 
+// MARK: - Refraction glass (rendered by the backboardd component) --------------
+
+// A CABackdropLayer whose filter type is routed, inside the render server, to a Metal
+// shader that refracts what is behind it (see backboardd/). The system MTMaterialView
+// it replaces is hidden. The renderer announces itself with a marker file; without it
+// the plain CALayer look is used.
+static const void *kGlassKey = &kGlassKey;   // on the MTMaterialView: its XCGlassView
+
+static BOOL GlassRendererReady(void) {
+    static CFTimeInterval last = -100.0;
+    static BOOL ready = NO;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - last > 2.0) {
+        last = now;
+        ready = access("/var/mobile/Library/Accessibility/xenonglass-ready", F_OK) == 0;
+    }
+    return ready;
+}
+
+static NSHashTable<UIView *> *gGlassViews;
+static BOOL gGlassObserverSet;
+
+@interface XCGlassView : UIView
+@property (nonatomic) CGFloat glassRadius;
+@property (nonatomic) BOOL glassDark;
+- (void)attachFilter;
+- (void)reloadFilter;
+@end
+
+@implementation XCGlassView {
+    BOOL _configured;
+    BOOL _variant;
+    CGFloat _appliedScale;
+    NSInteger _lastStep;
+    NSString *_attachedType;
+    NSString *_group;
+}
+
++ (Class)layerClass { return NSClassFromString(@"CABackdropLayer") ?: [CALayer class]; }
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (!self) return nil;
+    static unsigned counter = 0;
+    static uint32_t salt = 0;
+    if (!salt) salt = arc4random();
+    _lastStep = -1;
+    _group = [NSString stringWithFormat:@"xenon.liquidglass.p%d.%08x.g%u", getpid(), salt, ++counter];
+    self.userInteractionEnabled = NO;
+    self.backgroundColor = UIColor.clearColor;
+    self.opaque = NO;
+    return self;
+}
+
+- (void)attachFilter {
+    CALayer *layer = self.layer;
+    Class backdrop = NSClassFromString(@"CABackdropLayer");
+    CGSize sz = self.bounds.size;
+    if (!backdrop || ![layer isKindOfClass:backdrop] || sz.width < 1.0 || sz.height < 1.0) return;
+    @try {
+        if (!_configured) {
+            [layer setValue:@NO forKey:@"layerUsesCoreImageFilters"];
+            [layer setValue:@NO forKey:@"windowServerAware"];
+            [layer setValue:_group forKey:@"groupName"];
+            [layer setValue:@"xenon.liquidglass" forKey:@"groupNamespace"];
+            [layer setValue:@YES forKey:@"ignoresScreenClip"];
+            _configured = YES;
+        }
+        CGFloat scale = sqrt(8000.0 / MAX(1.0, sz.width * sz.height));
+        scale = MIN(0.75, MAX(0.25, scale));
+        if (fabs(scale - _appliedScale) > 0.02) {
+            [layer setValue:@(scale) forKey:@"scale"];
+            _appliedScale = scale;
+        }
+
+        CGFloat shortest = MIN(sz.width, sz.height);
+        CGFloat ratio = shortest > 0.0 ? self.glassRadius / shortest : 0.0;
+        CGFloat exact = MAX(0.0, MIN(0.5, ratio)) * 32.0;
+        NSInteger step = (NSInteger)llround(exact);
+        if (_lastStep >= 0 && fabs(exact - (CGFloat)_lastStep) < 0.75) step = _lastStep;
+        _lastStep = step;
+
+        NSMutableString *type = [NSMutableString stringWithFormat:@"xenon.liquidglass.cc.r%ld", (long)step];
+        if (self.glassDark) [type appendString:@".dark"];
+        if (_variant) [type appendString:@".refresh"];
+        if ([_attachedType isEqualToString:type] && layer.filters.count == 1) return;
+
+        Class filterCls = NSClassFromString(@"CAFilter");
+        if (!filterCls) return;
+        id filter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(
+            filterCls, NSSelectorFromString(@"filterWithType:"), type);
+        if (!filter) return;
+        if (access("/var/mobile/Library/Accessibility/xenonglass-gaussian-identity-state.bin", F_OK) == 0) {
+            @try { [filter setValue:@1.0 forKey:@"inputRadius"]; } @catch (__unused NSException *e) {}
+        }
+        layer.filters = @[filter];
+        _attachedType = [type copy];
+    } @catch (__unused NSException *e) {}
+}
+
+// Render parameters changed in backboardd: flip to the ".refresh" twin atom so the
+// render server rebuilds the pass with the new numbers.
+- (void)reloadFilter {
+    _variant = !_variant;
+    _attachedType = nil;
+    [self attachFilter];
+}
+
+@end
+
+static void GlassParametersReloaded(CFNotificationCenterRef c, void *o, CFStringRef n,
+                                    const void *obj, CFDictionaryRef info) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        for (XCGlassView *g in gGlassViews.allObjects) [g reloadFilter];
+        [CATransaction commit];
+    });
+}
+
+static BOOL IsExactMaterial(UIView *s) {
+    static Class mt;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ mt = NSClassFromString(@"MTMaterialView"); });
+    return mt && s.class == mt;
+}
+
+static void RemoveGlass(UIView *mat) {
+    XCGlassView *g = objc_getAssociatedObject(mat, kGlassKey);
+    if (!g) return;
+    [g removeFromSuperview];
+    objc_setAssociatedObject(mat, kGlassKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    mat.hidden = NO;
+}
+
+static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int depth) {
+    if (depth > 2) return;
+    for (UIView *s in [root.subviews copy]) {
+        if ([s isKindOfClass:XCGlassView.class]) continue;
+        if (IsExactMaterial(s)) {
+            if (!want || s.bounds.size.width < 30.0 || s.bounds.size.height < 30.0) { RemoveGlass(s); continue; }
+            XCGlassView *g = objc_getAssociatedObject(s, kGlassKey);
+            if (!g) {
+                g = [[XCGlassView alloc] initWithFrame:s.frame];
+                objc_setAssociatedObject(s, kGlassKey, g, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                if (!gGlassViews) gGlassViews = [NSHashTable weakObjectsHashTable];
+                [gGlassViews addObject:g];
+                if (!gGlassObserverSet) {
+                    gGlassObserverSet = YES;
+                    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                        GlassParametersReloaded, CFSTR("xenon.liquidglass/ParametersReloaded"),
+                        NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                }
+            }
+            if (g.superview != root) [root insertSubview:g aboveSubview:s];
+            if (!CGRectEqualToRect(g.frame, s.frame)) g.frame = s.frame;
+            g.layer.cornerCurve = kCACornerCurveContinuous;
+            g.layer.cornerRadius = radius;
+            g.layer.masksToBounds = YES;
+            g.glassRadius = radius;
+            g.glassDark = dark;
+            [g attachFilter];
+            if (!s.hidden) s.hidden = YES;
+            continue;
+        }
+        if ([NSStringFromClass(s.class) containsString:@"Slider"]) continue;
+        SyncGlassIn(s, want, radius, dark, depth + 1);
+    }
+}
+
+static void SyncGlass(UIView *v, CCKind kind, CGFloat radius, BOOL dark, BOOL enabled) {
+    if (kind != CCKindModuleFill && kind != CCKindContainer) return;
+    BOOL want = enabled && gRefract && GlassRendererReady();
+    SyncGlassIn(v, want, radius, dark, 0);
+}
+
 static BOOL StyleCacheMatches(CCViewCache *cache, UIView *v, CCKind kind,
                               CGSize size, BOOL enabled, BOOL dark) {
     return cache.styleValid && cache.styleGeneration == gStyleGeneration &&
@@ -756,6 +936,8 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     CCViewCache *cache = ViewCache(v);
     if (StyleCacheMatches(cache, v, kind, b.size, enabled, darkUI)) {
         KeepRimOnTop(v);
+        NSNumber *lastR = objc_getAssociatedObject(v, kLastRKey);
+        if (lastR) SyncGlass(v, kind, lastR.doubleValue, darkUI, enabled);
         // Expanded modules can receive late-arriving menu subviews without
         // changing their own geometry, so keep discovering those cheaply.
         if (kind == CCKindContainer) DecorateMenus(v);
@@ -764,6 +946,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
 
     if (!enabled) {
         HideDecor(v);
+        SyncGlass(v, kind, 0.0, darkUI, NO);
         SetMaterialAlpha(v, 0, 1.0);
         if (kind == CCKindContainer && gEnabled) DecorateMenus(v);
         RememberStyle(cache, v, kind, enabled, darkUI);
@@ -806,9 +989,11 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     layer.borderWidth   = 0.0;
 
     SetMaterialAlpha(v, 0, darkUI ? gMatAlpha : MAX(gMatAlpha, 0.7));
+    SyncGlass(v, kind, r, darkUI, YES);
+    BOOL glassOn = gRefract && GlassRendererReady();
 
     if (kind == CCKindModuleFill) {
-        CGFloat ft = darkUI ? gEffTint * 0.2 : gEffTint * 0.85;
+        CGFloat ft = glassOn ? 0.0 : (darkUI ? gEffTint * 0.2 : gEffTint * 0.85);
         v.backgroundColor = ft > 0.001 ? [gFillColor colorWithAlphaComponent:ft] : nil;
         ApplyExtraBlur(v, b);
     }

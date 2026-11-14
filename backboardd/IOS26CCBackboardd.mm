@@ -1166,7 +1166,7 @@ static_assert(kHostCount == LGHostIdentifierCount, "registry and renderer host o
 static LGHostParams g_hostParams[kHostCount];
 static uint32_t g_darkAtoms[kHostCount];
 static bool         g_hostParamsInit = false;
-static float        g_fresnelGlareStrength = 0.5f;
+static float        g_fresnelGlareStrength = 0.8f;
 static float        g_coverSheetCornerRadiusPoints = 64.0f;
 
 struct LGRadiusRoute { int host; float radiusRatio; bool dark; };
@@ -1249,7 +1249,7 @@ static void lgReloadHostPrefs(void) {
         ? debugLogging.boolValue : false;
     NSNumber *fresnelStrength = prefs[@"Renderer.FresnelGlareStrength"];
     g_fresnelGlareStrength = [fresnelStrength isKindOfClass:NSNumber.class]
-        ? fminf(1.0f, fmaxf(0.0f, fresnelStrength.floatValue)) : 0.5f;
+        ? fminf(1.0f, fmaxf(0.0f, fresnelStrength.floatValue)) : 0.8f;
     g_coverSheetCornerRadiusPoints = 64.0f;
     NSNumber *coverSheetCornerRadius = prefs[@"CoverSheet.CornerRadius"];
     if ([coverSheetCornerRadius isKindOfClass:[NSNumber class]]) {
@@ -2110,6 +2110,11 @@ static bool registerCustomFilter(void) {
     }
 
     g_filterRegistered = true;
+    {   // tell SpringBoard the renderer is live (it falls back to plain layers otherwise)
+        int rf = open("/var/mobile/Library/Accessibility/xenonglass-ready",
+                      O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (rf >= 0) close(rf);
+    }
     lglog("registerCustomFilter: done mode=%s descriptor=%p renderSlot=%d atom=0x%x hosts=%d",
           g_useHookPath ? "hook" : "clone", registrationDescriptor,
           renderSlot, atomId, kHostCount);
