@@ -8,7 +8,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Liquid Glass look for the iOS 18 Control Center. Changes apply live. Turning an element off fully takes effect after a respring.</string>
+			<string>Liquid Glass look for the iOS 18 Control Center. Changes apply live.</string>
 			<key>label</key>
 			<string>iOS 26 Control Center Style</string>
 		</dict>
@@ -30,7 +30,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Left: ultra clear (see-through, brighter edges). Right: fully tinted (more contrast and readability). Same idea as iOS 27: Settings &gt; Appearance &gt; Liquid Glass.</string>
+			<string>Left: ultra clear (see-through, brighter edges). Right: fully tinted (more contrast). Same idea as iOS 27: Settings &gt; Appearance &gt; Liquid Glass.</string>
 			<key>label</key>
 			<string>Liquid Glass</string>
 		</dict>
@@ -181,46 +181,30 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Specular rim, sheen, reflection streak and corner highlights.</string>
 			<key>label</key>
-			<string>Glass rim</string>
+			<string>Reflectivity</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
 			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
-			<string>PSLinkListCell</string>
+			<string>PSSliderCell</string>
 			<key>default</key>
-			<string>white</string>
+			<real>0.8</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
-			<key>detail</key>
-			<string>PSListItemsController</string>
+			<key>isSegmented</key>
+			<false/>
 			<key>key</key>
-			<string>rimColor</string>
-			<key>label</key>
-			<string>Rim color</string>
-			<key>validTitles</key>
-			<array>
-				<string>White</string>
-				<string>Blue</string>
-				<string>Teal</string>
-				<string>Green</string>
-				<string>Orange</string>
-				<string>Pink</string>
-				<string>Purple</string>
-				<string>Black</string>
-			</array>
-			<key>validValues</key>
-			<array>
-				<string>white</string>
-				<string>blue</string>
-				<string>teal</string>
-				<string>green</string>
-				<string>orange</string>
-				<string>pink</string>
-				<string>purple</string>
-				<string>black</string>
-			</array>
+			<string>reflect</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -279,8 +263,192 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Subtle cool/warm tint on the specular edge, like glass dispersion.</string>
 			<key>label</key>
-			<string>Glass fill</string>
+			<string>Edge color fringe</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.5</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>dispersion</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>iOS 27-style darkened outline around glass.</string>
+			<key>label</key>
+			<string>Dark edge</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.5</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>edgeDark</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Specular hot spots at the top-left and bottom-right corners.</string>
+			<key>label</key>
+			<string>Corner highlights</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.15</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>glow</string>
+			<key>max</key>
+			<real>0.3</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Soft highlight fading down from the top edge.</string>
+			<key>label</key>
+			<string>Top sheen</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.1</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>sheen</string>
+			<key>max</key>
+			<real>0.2</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Keep this low; it can make modules look muddy.</string>
+			<key>label</key>
+			<string>Inner edge glow</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.1</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>isSegmented</key>
+			<false/>
+			<key>key</key>
+			<string>innerRim</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Rim color</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSLinkListCell</string>
+			<key>default</key>
+			<string>white</string>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>detail</key>
+			<string>PSListItemsController</string>
+			<key>key</key>
+			<string>rimColor</string>
+			<key>label</key>
+			<string>Rim color</string>
+			<key>validTitles</key>
+			<array>
+				<string>White</string>
+				<string>Blue</string>
+				<string>Teal</string>
+				<string>Green</string>
+				<string>Orange</string>
+				<string>Pink</string>
+				<string>Purple</string>
+				<string>Black</string>
+			</array>
+			<key>validValues</key>
+			<array>
+				<string>white</string>
+				<string>blue</string>
+				<string>teal</string>
+				<string>green</string>
+				<string>orange</string>
+				<string>pink</string>
+				<string>purple</string>
+				<string>black</string>
+			</array>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Fill color</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -352,9 +520,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Soft highlight fading down from the top edge.</string>
+			<string>Real blur radius of the wallpaper behind Control Center. 1 = stock, 0 = sharp wallpaper.</string>
 			<key>label</key>
-			<string>Top sheen</string>
+			<string>Background blur</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -362,47 +530,13 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.1</real>
+			<real>1.0</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
 			<false/>
 			<key>key</key>
-			<string>sheen</string>
-			<key>max</key>
-			<real>0.2</real>
-			<key>min</key>
-			<real>0.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Liquid glass depth</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Soft glass thickness just inside the rim.</string>
-			<key>label</key>
-			<string>Inner edge glow</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.xenon.ios26ccstyle/reload</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0.1</real>
-			<key>defaults</key>
-			<string>com.xenon.ios26ccstyle</string>
-			<key>isSegmented</key>
-			<false/>
-			<key>key</key>
-			<string>innerRim</string>
+			<string>bgBlur</string>
 			<key>max</key>
 			<real>1.0</real>
 			<key>min</key>
@@ -414,73 +548,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Specular hot spots at the top-left and bottom-right corners.</string>
-			<key>label</key>
-			<string>Corner highlights</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.xenon.ios26ccstyle/reload</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0.15</real>
-			<key>defaults</key>
-			<string>com.xenon.ios26ccstyle</string>
-			<key>isSegmented</key>
-			<false/>
-			<key>key</key>
-			<string>glow</string>
-			<key>max</key>
-			<real>0.3</real>
-			<key>min</key>
-			<real>0.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Adds an extra blur layer behind module backgrounds. May cost battery.</string>
-			<key>label</key>
-			<string>Experimental</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.xenon.ios26ccstyle/reload</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.xenon.ios26ccstyle</string>
-			<key>key</key>
-			<string>extraBlur</string>
-			<key>label</key>
-			<string>Extra blur</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Restarts SpringBoard to fully apply element toggles.</string>
-			<key>label</key>
-			<string>Respring</string>
-		</dict>
-		<dict>
-			<key>action</key>
-			<string>respring</string>
-			<key>cell</key>
-			<string>PSButtonCell</string>
-			<key>label</key>
-			<string>Respring</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Real lens refraction rendered inside backboardd. Needs a userspace reboot (or reboot) after installing. Without it the plain layer look is used.</string>
+			<string>Real lens refraction rendered inside backboardd. After installing or updating, restart backboardd (button below) once. Without the renderer the plain layer look is used.</string>
 			<key>label</key>
 			<string>Refraction glass</string>
 		</dict>
@@ -497,6 +565,20 @@
 			<string>refraction</string>
 			<key>label</key>
 			<string>Real refraction glass</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>Renderer.Enabled</string>
+			<key>label</key>
+			<string>Renderer enabled (backboardd)</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -661,6 +743,48 @@
 			<true/>
 		</dict>
 		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Restart backboardd briefly blanks the screen (like a userspace reboot) and loads the renderer. Reset puts every setting back to the tweak defaults.</string>
+			<key>label</key>
+			<string>Actions</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>respring</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Respring</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>restartBackboardd</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Restart backboardd</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>resetDefaults</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>isDestructive</key>
+			<true/>
+			<key>label</key>
+			<string>Reset to defaults</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Extra blur adds one blur view per module and costs frame rate. Leave it off unless you need it.</string>
+			<key>label</key>
+			<string>Experimental</string>
+		</dict>
+		<dict>
 			<key>PostNotification</key>
 			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
@@ -670,127 +794,15 @@
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
-			<string>Debug.Logging.Enabled</string>
+			<string>extraBlur</string>
 			<key>label</key>
-			<string>Renderer debug log</string>
+			<string>Extra blur</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Real blur radius of the wallpaper behind Control Center. 1 = stock, 0 = sharp wallpaper.</string>
-			<key>label</key>
-			<string>Background blur</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.xenon.ios26ccstyle/reload</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>1.0</real>
-			<key>defaults</key>
-			<string>com.xenon.ios26ccstyle</string>
-			<key>isSegmented</key>
-			<false/>
-			<key>key</key>
-			<string>bgBlur</string>
-			<key>max</key>
-			<real>1.0</real>
-			<key>min</key>
-			<real>0.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Specular rim, sheen, reflection streak and corner highlights.</string>
-			<key>label</key>
-			<string>Reflectivity</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.xenon.ios26ccstyle/reload</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0.8</real>
-			<key>defaults</key>
-			<string>com.xenon.ios26ccstyle</string>
-			<key>isSegmented</key>
-			<false/>
-			<key>key</key>
-			<string>reflect</string>
-			<key>max</key>
-			<real>1.0</real>
-			<key>min</key>
-			<real>0.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Subtle cool/warm tint on the specular edge, like glass dispersion.</string>
-			<key>label</key>
-			<string>Edge color fringe</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.xenon.ios26ccstyle/reload</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0.5</real>
-			<key>defaults</key>
-			<string>com.xenon.ios26ccstyle</string>
-			<key>isSegmented</key>
-			<false/>
-			<key>key</key>
-			<string>dispersion</string>
-			<key>max</key>
-			<real>1.0</real>
-			<key>min</key>
-			<real>0.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>iOS 27-style darkened outline around glass.</string>
-			<key>label</key>
-			<string>Dark edge</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.xenon.ios26ccstyle/reload</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0.5</real>
-			<key>defaults</key>
-			<string>com.xenon.ios26ccstyle</string>
-			<key>isSegmented</key>
-			<false/>
-			<key>key</key>
-			<string>edgeDark</string>
-			<key>max</key>
-			<real>1.0</real>
-			<key>min</key>
-			<real>0.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Writes a view dump to /var/mobile/Library/Preferences/ios26ccstyle-dump.txt</string>
+			<string>View dump: /var/mobile/Library/Preferences/ios26ccstyle-dump.txt. Renderer log: /var/mobile/Library/Accessibility/xenonglass.log (read at backboardd start).</string>
 			<key>label</key>
 			<string>Diagnostics</string>
 		</dict>
@@ -809,10 +821,24 @@
 			<string>Write view dump</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>Debug.Logging.Enabled</string>
+			<key>label</key>
+			<string>Renderer debug log</string>
+		</dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>iOS 26 Control Center Style 0.2.0</string>
+			<string>iOS 26 Control Center Style 0.3.0</string>
 			<key>label</key>
 			<string>About</string>
 		</dict>

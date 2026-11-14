@@ -247,7 +247,12 @@ bool gLGBackboardDebugLogging = false;
 
 static void lglog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void lglog(const char *fmt, ...) {
-    if (!gLGBackboardDebugLogging) return;
+    // Start-up milestones are always logged (cheap, once per boot) so a missing renderer
+    // can be diagnosed without having enabled the debug switch beforehand.
+    bool essential = !strncmp(fmt, "init", 4) || !strncmp(fmt, "registerCustomFilter", 20) ||
+                     !strncmp(fmt, "resolve", 7) || !strncmp(fmt, "ready", 5) ||
+                     !strncmp(fmt, "=====", 5);
+    if (!gLGBackboardDebugLogging && !essential) return;
     FILE *f = fopen(LG_LOG_PATH, "a");
     if (!f) return;
     struct timeval tv; gettimeofday(&tv, NULL);
@@ -2130,17 +2135,22 @@ __attribute__((constructor))
 static void tweakInit(void) {
     @autoreleasepool {
     lgClearAccessibilityFiles();
-    if (lgShouldEnterSafeMode()) return;
-    {
-        NSDictionary *bootPrefs =
-            [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
-        NSNumber *debugLogging = bootPrefs[@"Debug.Logging.Enabled"];
-        gLGBackboardDebugLogging = [debugLogging isKindOfClass:NSNumber.class]
-            ? debugLogging.boolValue : false;
+    NSDictionary *bootPrefs = [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
+    NSNumber *debugLogging = bootPrefs[@"Debug.Logging.Enabled"];
+    gLGBackboardDebugLogging = [debugLogging isKindOfClass:NSNumber.class]
+        ? debugLogging.boolValue : false;
+    NSNumber *rendererEnabled = bootPrefs[@"Renderer.Enabled"];
+    if ([rendererEnabled isKindOfClass:NSNumber.class] && !rendererEnabled.boolValue) {
+        FILE *lf = fopen(LG_LOG_PATH, "w");
+        if (lf) { fputs("init: renderer disabled in settings (Renderer.Enabled = NO)\n", lf); fclose(lf); }
+        return;   // no hooks, no crash-guard bookkeeping
     }
-    if (gLGBackboardDebugLogging) {
-        FILE *lf = fopen(LG_LOG_PATH, "w"); if (lf) fclose(lf);
+    if (lgShouldEnterSafeMode()) {
+        FILE *lf = fopen(LG_LOG_PATH, "w");
+        if (lf) { fputs("init: crash guard is active, renderer not loaded (delete xenonglass-backboardd-guard.bin to retry)\n", lf); fclose(lf); }
+        return;
     }
+    { FILE *lf = fopen(LG_LOG_PATH, "w"); if (lf) fclose(lf); }
 
     NSOperatingSystemVersion osv = NSProcessInfo.processInfo.operatingSystemVersion;
     g_skipGaussianIdentityHook = false;

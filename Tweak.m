@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.0
+// IOS26CCStyle 0.2.1
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -124,7 +124,7 @@ static void LoadPrefs(void) {
     gBgBlur        = (CGFloat)PrefDouble(@"bgBlur", 1.0, 0.0, 1.0);
     gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.5, 0.0, 1.0);
     gDebugDump     = PrefBool(@"debugDump", NO);
-    gRefract       = PrefBool(@"refraction", YES);
+    gRefract       = PrefBool(@"refraction", YES) && PrefBool(@"Renderer.Enabled", YES);
     gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
     gFillColor     = ColorNamed(PrefString(@"fillColor", @"white"));
     gGeneration++;
@@ -140,17 +140,11 @@ typedef NS_ENUM(NSInteger, CCKind) {
     CCKindSlider,       // brightness / volume sliders
 };
 
-static const void *kRimKey    = &kRimKey;     // outer specular rim
-static const void *kEdgeKey   = &kEdgeKey;    // second, refracted inner rim
-static const void *kGlowKey   = &kGlowKey;    // inner edge glow (glass thickness)
 static const void *kSheenKey  = &kSheenKey;   // top sheen
 static const void *kHotTLKey  = &kHotTLKey;   // corner highlight, top-left
 static const void *kHotBRKey  = &kHotBRKey;   // corner highlight, bottom-right
 static const void *kBlurKey   = &kBlurKey;    // optional extra blur view
 static const void *kSigKey    = &kSigKey;
-static const void *kOutlineKey = &kOutlineKey; // dark hairline at the very edge
-static const void *kBevelAKey = &kBevelAKey;  // soft bevel highlight, inner (wide)
-static const void *kBevelBKey = &kBevelBKey;  // soft bevel highlight, outer (narrow)
 static const void *kStreakKey  = &kStreakKey;  // diagonal reflection band
 static const void *kShadeKey   = &kShadeKey;   // top-lit sphere shading (circles)
 static const void *kBgTimerKey = &kBgTimerKey; // on the window: backdrop re-check pending
@@ -181,74 +175,49 @@ static CGFloat TargetRadius(CCKind kind, CGSize size) {
     }
 }
 
+static const void *kEdgesKey = &kEdgesKey;   // one 9-slice image: rim, bevel, dark outline, inner glow
+
 static void HideDecor(UIView *v) {
-    const void *keys[] = { kRimKey, kEdgeKey, kGlowKey, kSheenKey, kHotTLKey, kHotBRKey,
-                           kOutlineKey, kStreakKey, kShadeKey, kBevelAKey, kBevelBKey };
+    const void *keys[] = { kEdgesKey, kSheenKey, kHotTLKey, kHotBRKey, kStreakKey, kShadeKey };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
         CALayer *l = objc_getAssociatedObject(v, keys[i]);
-        l.hidden = YES;
+        if (l && !l.hidden) l.hidden = YES;
     }
     UIView *blur = objc_getAssociatedObject(v, kBlurKey);
     blur.hidden = YES;
 }
 
 static CAGradientLayer *EnsureGradient(UIView *v, const void *key, NSString *name,
-                                       CGFloat z, BOOL stroke, BOOL radial, BOOL want) {
+                                       CGFloat z, BOOL radial, BOOL want) {
     CAGradientLayer *l = objc_getAssociatedObject(v, key);
     if (want && !l) {
         l = [CAGradientLayer layer];
         l.name = name;
         l.zPosition = z;
         if (radial) l.type = kCAGradientLayerRadial;
-        if (stroke) l.mask = [CAShapeLayer layer];
         objc_setAssociatedObject(v, key, l, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    l.hidden = !want;
-    if (l && l.superlayer != v.layer) [v.layer addSublayer:l];
+    if (l && l.hidden == want) l.hidden = !want;
+    if (want && l.superlayer != v.layer) [v.layer addSublayer:l];
     return l;
 }
 
-// A gradient layer masked to a rounded-rect outline (a lit glass edge).
-static void ConfigureStroke(CAGradientLayer *g, CGRect b, CGFloat radius, CGFloat inset, CGFloat width,
-                            NSArray *colors, CGPoint start, CGPoint end) {
-    g.frame = b;
-    g.startPoint = start;
-    g.endPoint = end;
-    g.locations = @[@0.0, @0.32, @0.68, @1.0];
-    g.colors = colors;
-    CAShapeLayer *mask = (CAShapeLayer *)g.mask;
-    mask.frame = g.bounds;
-    mask.fillColor = NULL;
-    mask.strokeColor = [UIColor blackColor].CGColor;
-    mask.lineWidth = width;
-    CGRect ir = CGRectInset(g.bounds, inset + width / 2.0, inset + width / 2.0);
-    mask.path = [UIBezierPath bezierPathWithRoundedRect:ir
-                                           cornerRadius:MAX(0.0, radius - inset - width / 2.0)].CGPath;
-}
-
-static id RimColor(CGFloat alpha) {
-    return (__bridge id)[gRimColor colorWithAlphaComponent:MAX(0.0, MIN(1.0, alpha))].CGColor;
+static UIColor *RimUI(CGFloat alpha) {
+    return [gRimColor colorWithAlphaComponent:MAX(0.0, MIN(1.0, alpha))];
 }
 
 // Rim colour with a slight cool / warm fringe (glass chromatic dispersion).
-static id RimColorD(CGFloat alpha, int warm) {
+static UIColor *RimUID(CGFloat alpha, int warm) {
     CGFloat r = 1, g = 1, b = 1, a = 1;
     [gRimColor getRed:&r green:&g blue:&b alpha:&a];
     CGFloat k = 0.30 * gDisp;
-    CGFloat tr = warm > 0 ? 1.0 : (warm < 0 ? 0.70 : r);
-    CGFloat tg = warm > 0 ? 0.82 : (warm < 0 ? 0.90 : g);
-    CGFloat tb = warm > 0 ? 0.68 : (warm < 0 ? 1.00 : b);
-    UIColor *c = [UIColor colorWithRed:r + (tr - r) * k green:g + (tg - g) * k blue:b + (tb - b) * k
-                                 alpha:MAX(0.0, MIN(1.0, alpha))];
-    return (__bridge id)c.CGColor;
+    CGFloat tr = warm > 0 ? 1.0 : 0.70;
+    CGFloat tg = warm > 0 ? 0.82 : 0.90;
+    CGFloat tb = warm > 0 ? 0.68 : 1.00;
+    return [UIColor colorWithRed:r + (tr - r) * k green:g + (tg - g) * k blue:b + (tb - b) * k
+                           alpha:MAX(0.0, MIN(1.0, alpha))];
 }
 
-// Liquid-glass decoration, modelled on the iOS 26 reference and the iOS 27 refinements
-// ("darkened edge" + "brighter specular highlights"):
-//  · dark hairline at the very edge, bright specular rim just inside it
-//  · second, refracted inner rim · inner edge glow (bevel) · top sheen
-//  · diagonal reflection streak · corner highlights · top-lit shading on circles
-// Every piece is a plain CALayer (they never take touches).
 // System appearance of the view (Control Center follows light/dark mode).
 static BOOL IsDarkUI(UIView *v) {
     UIUserInterfaceStyle st = v.window.traitCollection.userInterfaceStyle;
@@ -256,161 +225,195 @@ static BOOL IsDarkUI(UIView *v) {
     return st != UIUserInterfaceStyleLight;
 }
 
+// --- Edge image ---------------------------------------------------------------
+// Everything that traces the glass outline is drawn ONCE into a tiny bitmap and shown
+// through a single plain layer using a 9-slice (contentsCenter). That replaces five
+// gradient layers with masks (offscreen passes every frame) per view, and resizing a
+// module during the expand animation costs nothing: only the layer frame changes.
+
+static void StrokeGradient(CGContextRef c, CGSize size, CGFloat radius, CGFloat inset, CGFloat width,
+                           UIColor *c0, UIColor *c1, UIColor *c2, UIColor *c3, BOOL flip) {
+    CGRect r = CGRectInset(CGRectMake(0, 0, size.width, size.height), inset + width / 2.0, inset + width / 2.0);
+    if (r.size.width <= 0 || r.size.height <= 0) return;
+    UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:r
+                                                 cornerRadius:MAX(0.0, radius - inset - width / 2.0)];
+    CGContextSaveGState(c);
+    CGContextAddPath(c, p.CGPath);
+    CGContextSetLineWidth(c, width);
+    CGContextReplacePathWithStrokedPath(c);
+    CGContextClip(c);
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    NSArray *cols = @[(__bridge id)c0.CGColor, (__bridge id)c1.CGColor,
+                      (__bridge id)c2.CGColor, (__bridge id)c3.CGColor];
+    const CGFloat loc[4] = { 0.0, 0.30, 0.70, 1.0 };
+    CGGradientRef g = CGGradientCreateWithColors(cs, (__bridge CFArrayRef)cols, loc);
+    CGPoint s = flip ? CGPointMake(size.width, 0) : CGPointZero;
+    CGPoint e = flip ? CGPointMake(0, size.height) : CGPointMake(size.width, size.height);
+    CGContextDrawLinearGradient(c, g, s, e, kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
+    CGGradientRelease(g);
+    CGColorSpaceRelease(cs);
+    CGContextRestoreGState(c);
+}
+
+static NSCache<NSString *, UIImage *> *gEdgeCache;
+static NSUInteger gEdgeCacheGen;
+
+static UIImage *EdgeImage(CGFloat cap, CGFloat radius, BOOL dark, CGFloat scale) {
+    if (!gEdgeCache) gEdgeCache = [NSCache new];
+    if (gEdgeCacheGen != gGeneration) { [gEdgeCache removeAllObjects]; gEdgeCacheGen = gGeneration; }
+    NSString *key = [NSString stringWithFormat:@"%.0f|%.1f|%d|%.0f", cap, radius, dark, scale];
+    UIImage *img = [gEdgeCache objectForKey:key];
+    if (img) return img;
+
+    CGFloat S = 2.0 * cap + 2.0;
+    CGSize size = CGSizeMake(S, S);
+    CGFloat rs   = gReflect * 2.0;
+    CGFloat rimE = MIN(1.0, gRim * gRimMul);
+    CGFloat pk   = MIN(1.0, 0.6 + 0.4 * rs);
+    BOOL wantOutline = gEdgeDark > 0.001;
+    CGFloat rimInset = wantOutline ? 0.7 : 0.0;
+    CGFloat bw = MIN(7.0, MAX(3.0, radius * 0.2));
+
+    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat preferredFormat];
+    fmt.scale = scale;
+    fmt.opaque = NO;
+    UIGraphicsImageRenderer *rend = [[UIGraphicsImageRenderer alloc] initWithSize:size format:fmt];
+    img = [rend imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        CGContextRef c = ctx.CGContext;
+        UIColor *clear = [UIColor colorWithWhite:1.0 alpha:0.0];
+
+        if (gInner > 0.02) {   // soft inner glow: stacked wide strokes, uniform all round
+            for (int i = 1; i <= 3; i++) {
+                UIColor *g = RimUI(0.05 * gInner * (4 - i));
+                StrokeGradient(c, size, radius, rimInset, 2.5 * i, g, g, g, g, NO);
+            }
+        }
+        if (gRim > 0.001) {
+            // Thin specular line, strong at two opposite corners and nearly clear between ...
+            StrokeGradient(c, size, radius, rimInset, gRimWidth,
+                           RimUID(1.0 * pk * rimE, -1), RimUI(0.16 * rimE), RimUI(0.16 * rimE), RimUID(0.85 * pk * rimE, 1), NO);
+            // ... backed by wider soft strokes so the highlight fades inward like a bevel.
+            StrokeGradient(c, size, radius, rimInset, MAX(2.0, bw * 0.55),
+                           RimUID(0.40 * rs * rimE, -1), clear, clear, RimUID(0.30 * rs * rimE, 1), NO);
+            StrokeGradient(c, size, radius, rimInset, MAX(3.5, bw),
+                           RimUID(0.17 * rs * rimE, -1), clear, clear, RimUID(0.12 * rs * rimE, 1), NO);
+            // second, refracted line just inside, lit from the opposite diagonal
+            StrokeGradient(c, size, radius, rimInset + gRimWidth + 1.1, 0.55,
+                           RimUI(0.05 * rimE), RimUI(0.28 * rimE), RimUI(0.28 * rimE), RimUI(0.05 * rimE), YES);
+        }
+        if (wantOutline) {
+            UIColor *o = [UIColor colorWithWhite:0.0 alpha:MIN(0.6, (dark ? 0.38 : 0.20) * gEdgeDark)];
+            StrokeGradient(c, size, radius, 0.0, 0.7, o, o, o, o, NO);
+        }
+    }];
+    [gEdgeCache setObject:img forKey:key];
+    return img;
+}
+
+// Liquid-glass decoration, modelled on the iOS 26 reference and the iOS 27 refinements
+// ("darkened edge" + "brighter specular highlights"). Cheap by construction: one image
+// layer for all edge work plus a few unmasked gradient layers (the view itself already
+// clips to its rounded shape).
 static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     BOOL dark = IsDarkUI(v);
     CGFloat shortSide = MIN(b.size.width, b.size.height);
     BOOL circle = fabs(b.size.width - b.size.height) < 2.0 && radius >= shortSide / 2.0 - 0.5;
-    CGFloat rs   = gReflect * 2.0;                 // 0…2, 1 = neutral
-    CGFloat rimE = MIN(1.0, gRim * gRimMul);
-    CGFloat pk   = MIN(1.0, 0.6 + 0.4 * rs);       // specular peak strength
+    CGFloat rs = gReflect * 2.0;                 // 0…2, 1 = neutral
 
-    BOOL wantRim     = gRim > 0.001;
-    BOOL wantEdge    = wantRim;
-    BOOL wantOutline = gEdgeDark > 0.001;
-    BOOL wantGlow    = gInner > 0.001;
-    BOOL wantSheen   = gSheen > 0.001 && gReflect > 0.001;
-    BOOL wantHot     = gHot > 0.001 && gReflect > 0.001;
-    BOOL wantStreak  = gReflect > 0.001;
-    BOOL wantShade   = circle;
+    BOOL wantEdges  = gRim > 0.001 || gEdgeDark > 0.001 || gInner > 0.02;
+    BOOL wantSheen  = gSheen > 0.001 && gReflect > 0.001;
+    BOOL wantHot    = gHot > 0.001 && gReflect > 0.001;
+    BOOL wantStreak = gReflect > 0.001;
+    BOOL wantShade  = circle;
 
-    CAGradientLayer *rim    = EnsureGradient(v, kRimKey,    @"IOS26CCRim",    1000, YES, NO,  wantRim);
-    CAGradientLayer *bevA   = EnsureGradient(v, kBevelAKey, @"IOS26CCBevelA",  996, YES, NO,  wantRim);
-    CAGradientLayer *bevB   = EnsureGradient(v, kBevelBKey, @"IOS26CCBevelB",  995, YES, NO,  wantRim);
-    CAGradientLayer *edge   = EnsureGradient(v, kEdgeKey,   @"IOS26CCEdge",    990, YES, NO,  wantEdge);
-    CAGradientLayer *hotTL  = EnsureGradient(v, kHotTLKey,  @"IOS26CCHotTL",   910, NO,  YES, wantHot);
-    CAGradientLayer *hotBR  = EnsureGradient(v, kHotBRKey,  @"IOS26CCHotBR",   910, NO,  YES, wantHot);
-    CAGradientLayer *streak = EnsureGradient(v, kStreakKey, @"IOS26CCStreak",  905, NO,  NO,  wantStreak);
-    CAGradientLayer *sheen  = EnsureGradient(v, kSheenKey,  @"IOS26CCSheen",   900, NO,  NO,  wantSheen);
-    CAGradientLayer *shade  = EnsureGradient(v, kShadeKey,  @"IOS26CCShade",   880, NO,  NO,  wantShade);
+    CGFloat cap = MAX(1.0, MIN(ceil(radius) + 2.0, floor(shortSide / 2.0)));
+    CGFloat scale = v.window.screen.scale > 0 ? v.window.screen.scale : UIScreen.mainScreen.scale;
 
-    CAShapeLayer *outline = objc_getAssociatedObject(v, kOutlineKey);
-    if (wantOutline && !outline) {
-        outline = [CAShapeLayer layer];
-        outline.name = @"IOS26CCOutline";
-        outline.zPosition = 985;
-        outline.fillColor = NULL;
-        objc_setAssociatedObject(v, kOutlineKey, outline, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    CALayer *edges = objc_getAssociatedObject(v, kEdgesKey);
+    if (wantEdges && !edges) {
+        edges = [CALayer layer];
+        edges.name = @"IOS26CCEdges";
+        edges.zPosition = 1000;
+        edges.magnificationFilter = kCAFilterNearest;
+        objc_setAssociatedObject(v, kEdgesKey, edges, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    outline.hidden = !wantOutline;
-    if (outline && outline.superlayer != v.layer) [v.layer addSublayer:outline];
+    if (edges && edges.hidden == wantEdges) edges.hidden = !wantEdges;
+    if (wantEdges && edges.superlayer != v.layer) [v.layer addSublayer:edges];
 
-    CAShapeLayer *glow = objc_getAssociatedObject(v, kGlowKey);
-    if (wantGlow && !glow) {
-        glow = [CAShapeLayer layer];
-        glow.name = @"IOS26CCGlow";
-        glow.zPosition = 800;
-        glow.fillRule = kCAFillRuleEvenOdd;
-        glow.fillColor = [UIColor blackColor].CGColor;   // lies outside the view; the parent clips it
-        glow.shadowOffset = CGSizeZero;
-        objc_setAssociatedObject(v, kGlowKey, glow, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    glow.hidden = !wantGlow;
-    if (glow && glow.superlayer != v.layer) [v.layer addSublayer:glow];
-
-    NSString *sig = [NSString stringWithFormat:@"%lu|%.1f|%.1f|%.2f|%d",
-                     (unsigned long)gGeneration, b.size.width, b.size.height, radius, dark];
-    if ([objc_getAssociatedObject(v, kSigKey) isEqualToString:sig]) return;
-    objc_setAssociatedObject(v, kSigKey, sig, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    CAGradientLayer *hotTL  = EnsureGradient(v, kHotTLKey,  @"IOS26CCHotTL",  910, YES, wantHot);
+    CAGradientLayer *hotBR  = EnsureGradient(v, kHotBRKey,  @"IOS26CCHotBR",  910, YES, wantHot);
+    CAGradientLayer *streak = EnsureGradient(v, kStreakKey, @"IOS26CCStreak", 905, NO,  wantStreak);
+    CAGradientLayer *sheen  = EnsureGradient(v, kSheenKey,  @"IOS26CCSheen",  900, NO,  wantSheen);
+    CAGradientLayer *shade  = EnsureGradient(v, kShadeKey,  @"IOS26CCShade",  880, NO,  wantShade);
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
 
-    CGFloat rimInset = wantOutline ? 0.7 : 0.0;
-
-    if (wantOutline) {
-        outline.frame = b;
-        outline.strokeColor = [UIColor colorWithWhite:0.0 alpha:MIN(0.6, (dark ? 0.38 : 0.20) * gEdgeDark)].CGColor;
-        outline.lineWidth = 0.7;
-        outline.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(outline.bounds, 0.35, 0.35)
-                                                  cornerRadius:MAX(0.0, radius - 0.35)].CGPath;
+    // geometry: frames only (cheap, runs every layout)
+    CALayer *all[] = { edges, hotTL, hotBR, streak, sheen, shade };
+    for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+        CALayer *l = all[i];
+        if (l && !l.hidden && !CGRectEqualToRect(l.frame, b)) l.frame = b;
     }
 
-    if (wantRim) {
-        // Bright at the top-left and bottom-right, but never dark all the way around:
-        // the reference keeps a continuous thin light edge.
-        // Same recipe as LiquidAss: a thin specular line, strong at two opposite corners,
-        // nearly clear in between ...
-        ConfigureStroke(rim, b, radius, rimInset, gRimWidth,
-                        @[RimColorD(1.0 * pk * rimE, -1), RimColor(0.16 * rimE), RimColor(0.16 * rimE), RimColorD(0.85 * pk * rimE, 1)],
-                        CGPointMake(0.0, 0.0), CGPointMake(1.0, 1.0));
-        // ... backed by two softer, wider strokes so the highlight fades inward like a bevel.
-        CGFloat bw = MIN(shortSide * 0.12, 7.0);
-        ConfigureStroke(bevA, b, radius, rimInset, MAX(2.0, bw * 0.55),
-                        @[RimColorD(0.40 * rs * rimE, -1), RimColor(0.0), RimColor(0.0), RimColorD(0.30 * rs * rimE, 1)],
-                        CGPointMake(0.0, 0.0), CGPointMake(1.0, 1.0));
-        ConfigureStroke(bevB, b, radius, rimInset, MAX(3.5, bw),
-                        @[RimColorD(0.17 * rs * rimE, -1), RimColor(0.0), RimColor(0.0), RimColorD(0.12 * rs * rimE, 1)],
-                        CGPointMake(0.0, 0.0), CGPointMake(1.0, 1.0));
-        // Second, fainter line just inside, lit from the opposite diagonal (edge refraction).
-        ConfigureStroke(edge, b, radius, rimInset + gRimWidth + 1.1, 0.55,
-                        @[RimColor(0.05 * rimE), RimColor(0.28 * rimE), RimColor(0.28 * rimE), RimColor(0.05 * rimE)],
-                        CGPointMake(1.0, 0.0), CGPointMake(0.0, 1.0));
-    }
+    // style: only when a setting, the appearance or the corner shape changed
+    NSString *sig = [NSString stringWithFormat:@"%lu|%d|%d|%.0f|%.1f",
+                     (unsigned long)gGeneration, dark, circle, cap, radius];
+    if (![objc_getAssociatedObject(v, kSigKey) isEqualToString:sig]) {
+        objc_setAssociatedObject(v, kSigKey, sig, OBJC_ASSOCIATION_COPY_NONATOMIC);
 
-    if (wantGlow) {
-        glow.frame = b;
-        UIBezierPath *p = [UIBezierPath bezierPathWithRect:CGRectInset(glow.bounds, -60.0, -60.0)];
-        [p appendPath:[UIBezierPath bezierPathWithRoundedRect:glow.bounds cornerRadius:radius]];
-        glow.path = p.CGPath;
-        glow.shadowPath = p.CGPath;
-        glow.shadowColor = gRimColor.CGColor;
-        glow.shadowRadius = MIN(10.0, MAX(3.0, shortSide * 0.16));
-        glow.shadowOpacity = (float)(0.45 * gInner);
-    }
+        if (wantEdges) {
+            UIImage *img = EdgeImage(cap, MIN(radius, cap), dark, scale);
+            edges.contents = (__bridge id)img.CGImage;
+            edges.contentsScale = scale;
+            CGFloat S = 2.0 * cap + 2.0;
+            edges.contentsCenter = CGRectMake(cap / S, cap / S, 2.0 / S, 2.0 / S);
+        }
 
-    if (wantShade) {
-        // Top-lit sphere: clear at the top, darker toward the bottom.
-        shade.frame = b;
-        shade.startPoint = CGPointMake(0.5, 0.0);
-        shade.endPoint = CGPointMake(0.5, 1.0);
-        shade.locations = @[@0.0, @0.45, @1.0];
-        shade.colors = @[
-            (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.0].CGColor,
-            (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.0].CGColor,
-            (__bridge id)[UIColor colorWithWhite:0.0 alpha:dark ? 0.20 : 0.09].CGColor,
-        ];
-    }
-
-    if (wantSheen) {
-        CGFloat a = MIN(0.3, gSheen * rs * (dark ? 0.8 : 1.3));
-        sheen.frame = b;
-        sheen.startPoint = CGPointMake(0.5, 0.0);
-        sheen.endPoint = CGPointMake(0.5, 1.0);
-        sheen.locations = @[@0.0, @0.45, @1.0];
-        sheen.colors = @[
-            (__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
-            (__bridge id)[UIColor colorWithWhite:1.0 alpha:a * 0.25].CGColor,
-            (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor,
-        ];
-    }
-
-    if (wantStreak) {
-        // Soft diagonal reflection band across the upper-left of the glass.
-        CGFloat a = MIN(0.30, (dark ? 0.05 : 0.14) * rs);
-        CGColorRef clear = [UIColor colorWithWhite:1.0 alpha:0.0].CGColor;
-        streak.frame = b;
-        streak.startPoint = CGPointMake(0.0, 0.0);
-        streak.endPoint = CGPointMake(1.0, 1.0);
-        streak.locations = @[@0.0, @0.06, @0.16, @0.30, @1.0];
-        streak.colors = @[(__bridge id)clear, (__bridge id)clear,
-                          (__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
-                          (__bridge id)clear, (__bridge id)clear];
-    }
-
-    if (wantHot) {
-        CGFloat a = MIN(0.7, gHot * (dark ? 1.8 : 2.5) * rs * (circle ? 1.7 : 1.0));
-        NSArray *cols = @[(__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
-                          (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
-        hotTL.frame = b;
-        hotTL.locations = @[@0.0, @1.0];
-        hotTL.colors = cols;
-        hotTL.startPoint = CGPointMake(0.06, 0.04);
-        hotTL.endPoint = CGPointMake(0.62, 0.70);
-        hotBR.frame = b;
-        hotBR.locations = @[@0.0, @1.0];
-        hotBR.colors = cols;
-        hotBR.startPoint = CGPointMake(0.94, 0.96);
-        hotBR.endPoint = CGPointMake(0.38, 0.30);
+        if (wantShade) {
+            shade.startPoint = CGPointMake(0.5, 0.0);
+            shade.endPoint = CGPointMake(0.5, 1.0);
+            shade.locations = @[@0.0, @0.45, @1.0];
+            shade.colors = @[
+                (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.0].CGColor,
+                (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.0].CGColor,
+                (__bridge id)[UIColor colorWithWhite:0.0 alpha:dark ? 0.20 : 0.09].CGColor,
+            ];
+        }
+        if (wantSheen) {
+            CGFloat a = MIN(0.3, gSheen * rs * (dark ? 0.8 : 1.3));
+            sheen.startPoint = CGPointMake(0.5, 0.0);
+            sheen.endPoint = CGPointMake(0.5, 1.0);
+            sheen.locations = @[@0.0, @0.45, @1.0];
+            sheen.colors = @[
+                (__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
+                (__bridge id)[UIColor colorWithWhite:1.0 alpha:a * 0.25].CGColor,
+                (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor,
+            ];
+        }
+        if (wantStreak) {
+            CGFloat a = MIN(0.30, (dark ? 0.05 : 0.14) * rs);
+            CGColorRef clear = [UIColor colorWithWhite:1.0 alpha:0.0].CGColor;
+            streak.startPoint = CGPointMake(0.0, 0.0);
+            streak.endPoint = CGPointMake(1.0, 1.0);
+            streak.locations = @[@0.0, @0.06, @0.16, @0.30, @1.0];
+            streak.colors = @[(__bridge id)clear, (__bridge id)clear,
+                              (__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
+                              (__bridge id)clear, (__bridge id)clear];
+        }
+        if (wantHot) {
+            CGFloat a = MIN(0.7, gHot * (dark ? 1.8 : 2.5) * rs * (circle ? 1.7 : 1.0));
+            NSArray *cols = @[(__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
+                              (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
+            hotTL.locations = @[@0.0, @1.0];
+            hotTL.colors = cols;
+            hotTL.startPoint = CGPointMake(0.06, 0.04);
+            hotTL.endPoint = CGPointMake(0.62, 0.70);
+            hotBR.locations = @[@0.0, @1.0];
+            hotBR.colors = cols;
+            hotBR.startPoint = CGPointMake(0.94, 0.96);
+            hotBR.endPoint = CGPointMake(0.38, 0.30);
+        }
     }
 
     [CATransaction commit];
@@ -492,57 +495,78 @@ static void DecorateMenus(UIView *container) {
 // scale their alpha with the "bgBlur" slider (1 = stock).
 // The wallpaper blur is a CAFilter (gaussianBlur) inside the full-screen MTMaterialView's
 // layer tree. Scale its radius with the slider (1 = stock, 0 = sharp wallpaper).
-static const void *kBgOrigKey = &kBgOrigKey;   // on the filter: stock radius
-static const void *kBgSetKey  = &kBgSetKey;    // on the filter: radius we wrote last
+// The wallpaper blur of the Control Center is the full-screen MTMaterialView. Editing the
+// radius of its own filters has no effect (the material re-applies its recipe), so with the
+// slider below "stock" that view is hidden and a plain CABackdropLayer with a stock
+// gaussianBlur filter takes its place. Its alpha follows the hidden material, so the
+// open/close fade stays as the system drives it.
+static const void *kBlurViewKey = &kBlurViewKey;   // on the MTMaterialView: its XCBlurView
 
-static NSString *const kRadiusKeys[] = { @"inputRadius", @"radius", @"inputBlurRadius", @"blurRadius" };
+@interface XCBlurView : UIView
+- (void)updateRadius:(CGFloat)radius dark:(BOOL)dark;
+@end
 
-static BOOL ScaleFilterRadius(id filter) {
-    BOOL changed = NO;
-    for (size_t i = 0; i < sizeof(kRadiusKeys) / sizeof(kRadiusKeys[0]); i++) {
-        id cur = nil;
-        @try { cur = [filter valueForKey:kRadiusKeys[i]]; } @catch (__unused NSException *e) { continue; }
-        if (![cur respondsToSelector:@selector(doubleValue)]) continue;
-        double now = [cur doubleValue];
-        NSNumber *lastSet = objc_getAssociatedObject(filter, kBgSetKey);
-        NSNumber *orig = objc_getAssociatedObject(filter, kBgOrigKey);
-        if (!orig || !lastSet || fabs(now - lastSet.doubleValue) > 0.01) {
-            orig = @(now);   // first sight, or the system changed it: this is the stock value
-            objc_setAssociatedObject(filter, kBgOrigKey, orig, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-        double want = orig.doubleValue * gBgBlur;
-        if (fabs(now - want) > 0.01) {
-            @try { [filter setValue:@(want) forKey:kRadiusKeys[i]]; changed = YES; }
-            @catch (__unused NSException *e) {}
-        }
-        objc_setAssociatedObject(filter, kBgSetKey, @(want), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    return changed;
+@implementation XCBlurView {
+    CGFloat _radius;
+    BOOL _set;
 }
-
-static void ScaleLayerBlur(CALayer *layer, int depth) {
-    if (!layer || depth > 6) return;
-    NSArray *f = layer.filters;
-    BOOL ch = NO;
-    for (id flt in f) ch |= ScaleFilterRadius(flt);
-    if (ch) layer.filters = f;
++ (Class)layerClass { return NSClassFromString(@"CABackdropLayer") ?: [CALayer class]; }
+- (instancetype)initWithFrame:(CGRect)f {
+    self = [super initWithFrame:f];
+    if (self) { self.userInteractionEnabled = NO; self.opaque = NO; }
+    return self;
+}
+- (void)updateRadius:(CGFloat)radius dark:(BOOL)dark {
+    CALayer *layer = self.layer;
+    Class backdrop = NSClassFromString(@"CABackdropLayer");
+    Class filterCls = NSClassFromString(@"CAFilter");
+    if (!backdrop || !filterCls || ![layer isKindOfClass:backdrop]) return;
+    if (_set && fabs(radius - _radius) < 0.3) return;
+    _set = YES; _radius = radius;
     @try {
-        NSArray *bf = [layer valueForKey:@"backgroundFilters"];
-        if ([bf isKindOfClass:NSArray.class]) {
-            BOOL c2 = NO;
-            for (id flt in bf) c2 |= ScaleFilterRadius(flt);
-            if (c2) [layer setValue:bf forKey:@"backgroundFilters"];
-        }
+        [layer setValue:@NO forKey:@"layerUsesCoreImageFilters"];
+        [layer setValue:@0.25 forKey:@"scale"];
+        [layer setValue:@YES forKey:@"ignoresScreenClip"];
+        [layer setValue:[NSString stringWithFormat:@"xenon.bgblur.%p", self] forKey:@"groupName"];
+        id f = ((id (*)(Class, SEL, NSString *))objc_msgSend)(filterCls, NSSelectorFromString(@"filterWithType:"), @"gaussianBlur");
+        [f setValue:@(radius) forKey:@"inputRadius"];
+        [f setValue:@YES forKey:@"inputNormalizeEdges"];
+        layer.filters = @[f];
     } @catch (__unused NSException *e) {}
-    for (CALayer *sub in layer.sublayers) ScaleLayerBlur(sub, depth + 1);
+    // stock material also dims slightly
+    CGFloat dim = 0.22 * MIN(1.0, radius / 30.0);
+    self.backgroundColor = dark ? [UIColor colorWithWhite:0.0 alpha:dim] : [UIColor colorWithWhite:1.0 alpha:dim * 0.6];
+}
+@end
+
+static void RemoveBgBlur(UIView *mat) {
+    XCBlurView *b = objc_getAssociatedObject(mat, kBlurViewKey);
+    if (!b) return;
+    [b removeFromSuperview];
+    objc_setAssociatedObject(mat, kBlurViewKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    mat.hidden = NO;
 }
 
 static void ScaleBackdrop(UIView *s) {
-    BOOL flagged = objc_getAssociatedObject(s, kBgTargetKey) != nil;
-    if (gBgBlur < 0.999 || flagged) {
-        ScaleLayerBlur(s.layer, 0);
-        objc_setAssociatedObject(s, kBgTargetKey, gBgBlur < 0.999 ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    XCBlurView *b = objc_getAssociatedObject(s, kBlurViewKey);
+    UIView *parent = s.superview;
+    if (!gEnabled || gBgBlur >= 0.999 || !parent) { RemoveBgBlur(s); return; }
+    if (!b) {
+        b = [[XCBlurView alloc] initWithFrame:s.frame];
+        objc_setAssociatedObject(s, kBlurViewKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
+    if (b.superview != parent) [parent insertSubview:b aboveSubview:s];
+    if (!CGRectEqualToRect(b.frame, s.frame)) b.frame = s.frame;
+    if (fabs(b.alpha - s.alpha) > 0.001) b.alpha = s.alpha;
+    [b updateRadius:30.0 * gBgBlur dark:IsDarkUI(s)];
+    if (!s.hidden) s.hidden = YES;
+}
+
+static void (*orig_setAlpha)(UIView *, SEL, CGFloat);
+static void hook_setAlpha(UIView *self, SEL _cmd, CGFloat a) {
+    orig_setAlpha(self, _cmd, a);
+    XCBlurView *b = objc_getAssociatedObject(self, kBlurViewKey);
+    if (b) b.alpha = a;
 }
 
 static BOOL IsBgCandidate(UIView *s, UIWindow *w) {
@@ -570,7 +594,8 @@ static void WalkBg(UIView *root, UIWindow *w, int depth, int *budget, NSMutableS
         }
         if (!big) continue;
         if (IsBgCandidate(s, w)) {
-            ScaleBackdrop(s);
+            static Class mt; static dispatch_once_t o; dispatch_once(&o, ^{ mt = NSClassFromString(@"MTMaterialView"); });
+            if (mt && s.class == mt) ScaleBackdrop(s);
             continue;
         }
         WalkBg(s, w, depth + 1, budget, dump);
@@ -944,6 +969,7 @@ static void IOS26CCStyleInit(void) {
         Install_Round       ("CCUIRoundButton");
         Install_Slider      ("CCUIContinuousSliderView");
         Install_Stepped     ("CCUISteppedSliderView");
+        InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,
