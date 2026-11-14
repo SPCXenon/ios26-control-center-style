@@ -3,16 +3,15 @@
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
 // No CydiaSubstrate dependency: hooks are installed with the ObjC runtime
-// (class_addMethod / method_setImplementation). Only selected Control Center
-// view classes are hooked; UIView's layout methods are never hooked globally.
+// (class_addMethod / method_setImplementation). The header pocket (top oval) is
+// intentionally left untouched.
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <notify.h>
-#include <stdlib.h>
-#include <unistd.h>
 #import <objc/message.h>
+#include <unistd.h>
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
@@ -37,9 +36,7 @@ static CGFloat gBgBlur;        // full-screen backdrop blur: 1 = stock, lower = 
 static BOOL    gRefract;       // real refraction glass via the backboardd renderer
 static BOOL    gDebugDump;     // write a view-tree dump (for class-name diagnostics)
 static UIColor *gRimColor, *gFillColor;
-static NSUInteger gGeneration;      // prefs/background diagnostics generation
-static NSUInteger gStyleGeneration; // bumped only when a visual setting changes
-static NSString *gLastStyleSignature;
+static NSUInteger gGeneration; // bumped on every prefs reload
 
 static CFPropertyListRef CopyPref(NSString *key) {
     return CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)kPrefsDomain);
@@ -128,23 +125,8 @@ static void LoadPrefs(void) {
     gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.5, 0.0, 1.0);
     gDebugDump     = PrefBool(@"debugDump", NO);
     gRefract       = PrefBool(@"refraction", YES);
-    NSString *rimColorName = PrefString(@"rimColor", @"white");
-    NSString *fillColorName = PrefString(@"fillColor", @"white");
-    gRimColor      = ColorNamed(rimColorName);
-    gFillColor     = ColorNamed(fillColorName);
-
-    // This settings-only signature avoids invalidating per-view caches for
-    // diagnostic-only preference changes such as toggling the view-tree dump.
-    NSString *styleSignature = [NSString stringWithFormat:
-        @"%d|%d|%d|%d|%d|%d|%d|%d|%d|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%@|%@",
-        gEnabled, gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus,
-        gSliderCapsule, gContinuous, gExtraBlur, gRefract, gMaxRadius, gRim, gRimWidth,
-        gSheen, gTint, gInner, gHot, gGlass, gMatAlpha, gEffTint, gRimMul,
-        gReflect, gEdgeDark, gBgBlur, gDisp, rimColorName, fillColorName];
-    if (![gLastStyleSignature isEqualToString:styleSignature]) {
-        gLastStyleSignature = [styleSignature copy];
-        gStyleGeneration++;
-    }
+    gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
+    gFillColor     = ColorNamed(PrefString(@"fillColor", @"white"));
     gGeneration++;
 }
 
@@ -158,59 +140,6 @@ typedef NS_ENUM(NSInteger, CCKind) {
     CCKindSlider,       // brightness / volume sliders
 };
 
-@interface CCViewCache : NSObject
-@property (nonatomic) BOOL decorValid;
-@property (nonatomic) CGSize decorSize;
-@property (nonatomic) CGFloat decorRadius;
-@property (nonatomic) BOOL decorDark;
-@property (nonatomic) NSUInteger decorGeneration;
-@property (nonatomic) BOOL styleValid;
-@property (nonatomic) CGSize styleSize;
-@property (nonatomic) CGSize styleWindowSize;
-@property (nonatomic) CGFloat styleAppliedRadius;
-@property (nonatomic) NSInteger styleKind;
-@property (nonatomic) BOOL styleDark;
-@property (nonatomic) BOOL styleEnabled;
-@property (nonatomic) NSUInteger styleGeneration;
-@end
-
-@implementation CCViewCache
-@end
-
-typedef NS_OPTIONS(NSUInteger, CCClassFlags) {
-    CCClassMaterialView = 1 << 0,
-    CCClassBackgroundExcluded = 1 << 1,
-    CCClassBackgroundNamed = 1 << 2,
-    CCClassBackdropLayer = 1 << 3,
-};
-
-static NSMapTable<Class, NSNumber *> *gClassFlagCache;
-
-// Runtime class names are inspected only on the first encounter with each class.
-static CCClassFlags FlagsForClass(Class cls) {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        gClassFlagCache = [NSMapTable strongToStrongObjectsMapTable];
-    });
-
-    // All callers are UIKit layout/window callbacks on SpringBoard's main thread.
-    NSNumber *cached = [gClassFlagCache objectForKey:cls];
-    if (cached) return (CCClassFlags)cached.unsignedIntegerValue;
-
-    NSString *name = NSStringFromClass(cls);
-    CCClassFlags flags = 0;
-    if ([name containsString:@"MaterialView"]) flags |= CCClassMaterialView;
-    if ([name hasPrefix:@"CCUI"] || [name containsString:@"IconList"] ||
-        [name containsString:@"ScrollView"]) flags |= CCClassBackgroundExcluded;
-    if ([name containsString:@"Material"] || [name containsString:@"Backdrop"] ||
-        [name containsString:@"Blur"] || [name containsString:@"Background"] ||
-        cls == UIVisualEffectView.class) flags |= CCClassBackgroundNamed;
-    if ([name containsString:@"Backdrop"]) flags |= CCClassBackdropLayer;
-
-    [gClassFlagCache setObject:@(flags) forKey:cls];
-    return flags;
-}
-
 static const void *kRimKey    = &kRimKey;     // outer specular rim
 static const void *kEdgeKey   = &kEdgeKey;    // second, refracted inner rim
 static const void *kGlowKey   = &kGlowKey;    // inner edge glow (glass thickness)
@@ -218,7 +147,7 @@ static const void *kSheenKey  = &kSheenKey;   // top sheen
 static const void *kHotTLKey  = &kHotTLKey;   // corner highlight, top-left
 static const void *kHotBRKey  = &kHotBRKey;   // corner highlight, bottom-right
 static const void *kBlurKey   = &kBlurKey;    // optional extra blur view
-static const void *kViewCacheKey = &kViewCacheKey;
+static const void *kSigKey    = &kSigKey;
 static const void *kOutlineKey = &kOutlineKey; // dark hairline at the very edge
 static const void *kBevelAKey = &kBevelAKey;  // soft bevel highlight, inner (wide)
 static const void *kBevelBKey = &kBevelBKey;  // soft bevel highlight, outer (narrow)
@@ -231,15 +160,6 @@ static const void *kMenuKey   = &kMenuKey;   // set on views decorated by the me
 static const void *kLastRKey  = &kLastRKey;  // corner radius we applied last
 static const void *kSysRKey   = &kSysRKey;   // corner radius the system had set
 static NSHashTable<UIView *> *gTracked;       // weak; used to restyle after a prefs change
-
-static CCViewCache *ViewCache(UIView *v) {
-    CCViewCache *cache = objc_getAssociatedObject(v, kViewCacheKey);
-    if (!cache) {
-        cache = [CCViewCache new];
-        objc_setAssociatedObject(v, kViewCacheKey, cache, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    return cache;
-}
 
 static BOOL KindEnabled(CCKind kind) {
     switch (kind) {
@@ -262,8 +182,6 @@ static CGFloat TargetRadius(CCKind kind, CGSize size) {
 }
 
 static void HideDecor(UIView *v) {
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
     const void *keys[] = { kRimKey, kEdgeKey, kGlowKey, kSheenKey, kHotTLKey, kHotBRKey,
                            kOutlineKey, kStreakKey, kShadeKey, kBevelAKey, kBevelBKey };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
@@ -272,9 +190,6 @@ static void HideDecor(UIView *v) {
     }
     UIView *blur = objc_getAssociatedObject(v, kBlurKey);
     blur.hidden = YES;
-    CCViewCache *cache = objc_getAssociatedObject(v, kViewCacheKey);
-    cache.decorValid = NO;
-    [CATransaction commit];
 }
 
 static CAGradientLayer *EnsureGradient(UIView *v, const void *key, NSString *name,
@@ -291,26 +206,6 @@ static CAGradientLayer *EnsureGradient(UIView *v, const void *key, NSString *nam
     l.hidden = !want;
     if (l && l.superlayer != v.layer) [v.layer addSublayer:l];
     return l;
-}
-
-static void KeepRimOnTop(UIView *v) {
-    CAGradientLayer *rim = objc_getAssociatedObject(v, kRimKey);
-    CALayer *parent = v.layer;
-    if (!rim || rim.superlayer != parent) return;
-
-    CGFloat highestZ = -CGFLOAT_MAX;
-    for (CALayer *sibling in parent.sublayers) {
-        if (sibling != rim) highestZ = MAX(highestZ, sibling.zPosition);
-    }
-
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    rim.zPosition = MAX(1000.0, highestZ + 1.0);
-    if (parent.sublayers.lastObject != rim) {
-        [rim removeFromSuperlayer];
-        [parent addSublayer:rim];
-    }
-    [CATransaction commit];
 }
 
 // A gradient layer masked to a rounded-rect outline (a lit glass edge).
@@ -363,14 +258,6 @@ static BOOL IsDarkUI(UIView *v) {
 
 static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     BOOL dark = IsDarkUI(v);
-    CCViewCache *cache = ViewCache(v);
-    if (cache.decorValid && cache.decorGeneration == gStyleGeneration &&
-        CGSizeEqualToSize(cache.decorSize, b.size) &&
-        fabs(cache.decorRadius - radius) < 0.01 && cache.decorDark == dark) {
-        KeepRimOnTop(v);
-        return;
-    }
-
     CGFloat shortSide = MIN(b.size.width, b.size.height);
     BOOL circle = fabs(b.size.width - b.size.height) < 2.0 && radius >= shortSide / 2.0 - 0.5;
     CGFloat rs   = gReflect * 2.0;                 // 0…2, 1 = neutral
@@ -385,9 +272,6 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     BOOL wantHot     = gHot > 0.001 && gReflect > 0.001;
     BOOL wantStreak  = gReflect > 0.001;
     BOOL wantShade   = circle;
-
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
 
     CAGradientLayer *rim    = EnsureGradient(v, kRimKey,    @"IOS26CCRim",    1000, YES, NO,  wantRim);
     CAGradientLayer *bevA   = EnsureGradient(v, kBevelAKey, @"IOS26CCBevelA",  996, YES, NO,  wantRim);
@@ -422,6 +306,14 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     }
     glow.hidden = !wantGlow;
     if (glow && glow.superlayer != v.layer) [v.layer addSublayer:glow];
+
+    NSString *sig = [NSString stringWithFormat:@"%lu|%.1f|%.1f|%.2f|%d",
+                     (unsigned long)gGeneration, b.size.width, b.size.height, radius, dark];
+    if ([objc_getAssociatedObject(v, kSigKey) isEqualToString:sig]) return;
+    objc_setAssociatedObject(v, kSigKey, sig, OBJC_ASSOCIATION_COPY_NONATOMIC);
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
 
     CGFloat rimInset = wantOutline ? 0.7 : 0.0;
 
@@ -521,23 +413,14 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
         hotBR.endPoint = CGPointMake(0.38, 0.30);
     }
 
-    KeepRimOnTop(v);
     [CATransaction commit];
-    cache.decorSize = b.size;
-    cache.decorRadius = radius;
-    cache.decorDark = dark;
-    cache.decorGeneration = gStyleGeneration;
-    cache.decorValid = YES;
 }
 
 // Optional extra backdrop blur behind the module fill (experimental, off by default).
 static void ApplyExtraBlur(UIView *v, CGRect b) {
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
     UIVisualEffectView *blur = objc_getAssociatedObject(v, kBlurKey);
     if (!gExtraBlur) {
         blur.hidden = YES;
-        [CATransaction commit];
         return;
     }
     if (!blur) {
@@ -549,28 +432,20 @@ static void ApplyExtraBlur(UIView *v, CGRect b) {
     blur.hidden = NO;
     if (blur.superview != v) [v insertSubview:blur atIndex:0];
     if (!CGRectEqualToRect(blur.frame, b)) blur.frame = b;
-    [CATransaction commit];
 }
 
 // MARK: - Material clarity (iOS 27-style Clear ↔ Tinted) ----------------------
 
 // Dims the system blur material behind a view so the wallpaper shows through.
-static void SetMaterialAlphaRecursive(UIView *root, int depth, CGFloat alpha) {
+static void SetMaterialAlpha(UIView *root, int depth, CGFloat alpha) {
     if (depth > 3) return;
     for (UIView *s in root.subviews) {
-        if (FlagsForClass(s.class) & CCClassMaterialView) {
+        if ([NSStringFromClass(s.class) containsString:@"MaterialView"]) {
             if (fabs(s.alpha - alpha) > 0.001) s.alpha = alpha;
             continue;
         }
-        SetMaterialAlphaRecursive(s, depth + 1, alpha);
+        SetMaterialAlpha(s, depth + 1, alpha);
     }
-}
-
-static void SetMaterialAlpha(UIView *root, int depth, CGFloat alpha) {
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    SetMaterialAlphaRecursive(root, depth, alpha);
-    [CATransaction commit];
 }
 
 // MARK: - Expanded menus ------------------------------------------------------
@@ -665,10 +540,7 @@ static void ScaleLayerBlur(CALayer *layer, int depth) {
 static void ScaleBackdrop(UIView *s) {
     BOOL flagged = objc_getAssociatedObject(s, kBgTargetKey) != nil;
     if (gBgBlur < 0.999 || flagged) {
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
         ScaleLayerBlur(s.layer, 0);
-        [CATransaction commit];
         objc_setAssociatedObject(s, kBgTargetKey, gBgBlur < 0.999 ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 }
@@ -676,10 +548,11 @@ static void ScaleBackdrop(UIView *s) {
 static BOOL IsBgCandidate(UIView *s, UIWindow *w) {
     CGSize ws = w.bounds.size;
     if (s.bounds.size.width < ws.width * 0.9 || s.bounds.size.height < ws.height * 0.9) return NO;
-    CCClassFlags flags = FlagsForClass(s.class);
-    if (flags & CCClassBackgroundExcluded) return NO;
-    if (flags & CCClassBackgroundNamed) return YES;
-    return (FlagsForClass(s.layer.class) & CCClassBackdropLayer) != 0;
+    NSString *n = NSStringFromClass(s.class);
+    if ([n hasPrefix:@"CCUI"] || [n containsString:@"IconList"] || [n containsString:@"ScrollView"]) return NO;
+    if ([n containsString:@"Material"] || [n containsString:@"Backdrop"] || [n containsString:@"Blur"] ||
+        [n containsString:@"Background"] || [n isEqualToString:@"UIVisualEffectView"]) return YES;
+    return [NSStringFromClass(s.layer.class) containsString:@"Backdrop"];
 }
 
 // Only near-full-screen views can be (or contain) the backdrop, so small subtrees
@@ -903,64 +776,29 @@ static void SyncGlass(UIView *v, CCKind kind, CGFloat radius, BOOL dark, BOOL en
     SyncGlassIn(v, want, radius, dark, 0);
 }
 
-static BOOL StyleCacheMatches(CCViewCache *cache, UIView *v, CCKind kind,
-                              CGSize size, BOOL enabled, BOOL dark) {
-    return cache.styleValid && cache.styleGeneration == gStyleGeneration &&
-           cache.styleKind == kind && cache.styleEnabled == enabled && cache.styleDark == dark &&
-           CGSizeEqualToSize(cache.styleSize, size) &&
-           CGSizeEqualToSize(cache.styleWindowSize, v.window.bounds.size) &&
-           fabs(cache.styleAppliedRadius - v.layer.cornerRadius) < 0.01;
-}
-
-static void RememberStyle(CCViewCache *cache, UIView *v, CCKind kind,
-                          BOOL enabled, BOOL dark) {
-    cache.styleSize = v.bounds.size;
-    cache.styleWindowSize = v.window.bounds.size;
-    cache.styleAppliedRadius = v.layer.cornerRadius;
-    cache.styleKind = kind;
-    cache.styleEnabled = enabled;
-    cache.styleDark = dark;
-    cache.styleGeneration = gStyleGeneration;
-    cache.styleValid = YES;
-}
-
 static void ApplyStyle(UIView *v, CCKind kind) {
     if (!v.window) return;
     ApplyBackground(v);
-    CGRect b = v.bounds;
-    if (b.size.width < 4.0 || b.size.height < 4.0) return;
-
-    BOOL enabled = gEnabled && KindEnabled(kind);
-    BOOL darkUI = IsDarkUI(v);
-    CALayer *layer = v.layer;
-    CCViewCache *cache = ViewCache(v);
-    if (StyleCacheMatches(cache, v, kind, b.size, enabled, darkUI)) {
-        KeepRimOnTop(v);
-        NSNumber *lastR = objc_getAssociatedObject(v, kLastRKey);
-        if (lastR) SyncGlass(v, kind, lastR.doubleValue, darkUI, enabled);
-        // Expanded modules can receive late-arriving menu subviews without
-        // changing their own geometry, so keep discovering those cheaply.
-        if (kind == CCKindContainer) DecorateMenus(v);
-        return;
-    }
-
-    if (!enabled) {
+    if (!gEnabled || !KindEnabled(kind)) {
         HideDecor(v);
-        SyncGlass(v, kind, 0.0, darkUI, NO);
+        SyncGlass(v, kind, 0.0, IsDarkUI(v), NO);
         SetMaterialAlpha(v, 0, 1.0);
         if (kind == CCKindContainer && gEnabled) DecorateMenus(v);
-        RememberStyle(cache, v, kind, enabled, darkUI);
         return;
     }
+
+    CGRect b = v.bounds;
+    if (b.size.width < 4.0 || b.size.height < 4.0) return;
 
     // Skip the full-page wrapper so no outline is drawn around the whole page.
     if ((kind == CCKindModule || kind == CCKindModuleFill || kind == CCKindContainer) &&
         b.size.height > v.window.bounds.size.height * 0.72) {
         HideDecor(v);
         if (kind == CCKindContainer) DecorateMenus(v);
-        RememberStyle(cache, v, kind, enabled, darkUI);
         return;
     }
+
+    CALayer *layer = v.layer;
 
     // Remember the radius the system itself uses (expanded modules are rounder than
     // tiles) and never go below it, so inner and outer shapes keep matching.
@@ -981,13 +819,12 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     objc_setAssociatedObject(v, kLastRKey, @(r), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(v, kStyledKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
     layer.cornerCurve   = gContinuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
     layer.cornerRadius  = r;
     layer.masksToBounds = YES;
     layer.borderWidth   = 0.0;
 
+    BOOL darkUI = IsDarkUI(v);
     SetMaterialAlpha(v, 0, darkUI ? gMatAlpha : MAX(gMatAlpha, 0.7));
     SyncGlass(v, kind, r, darkUI, YES);
     BOOL glassOn = gRefract && GlassRendererReady();
@@ -1004,8 +841,6 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     [gTracked addObject:v];
 
     if (kind == CCKindContainer) DecorateMenus(v);
-    [CATransaction commit];
-    RememberStyle(cache, v, kind, enabled, darkUI);
 }
 
 // CCUI occasionally resets its own corner radius right after the view lands in a
@@ -1026,54 +861,16 @@ static void ScheduleReapply(UIView *v, CCKind kind) {
 
 // MARK: - Hooks ---------------------------------------------------------------
 
-// class_getInstanceMethod() may return a method inherited from a superclass.
-// Enumerate this class's own method list so method_setImplementation() is never
-// accidentally applied to an inherited Method and changes the superclass.
-static Method OwnInstanceMethod(Class cls, SEL sel) {
-    unsigned int count = 0;
-    Method *methods = class_copyMethodList(cls, &count);
-    Method own = NULL;
-    for (unsigned int i = 0; i < count; i++) {
-        if (method_getName(methods[i]) == sel) {
-            own = methods[i];
-            break;
-        }
-    }
-    free(methods);
-    return own;
-}
-
-static Class ResolveHookClass(const char *className) {
+static BOOL InstallHook(const char *className, SEL sel, IMP replacement, IMP *original) {
     Class cls = objc_getClass(className);
-    if (!cls) {
-        NSLog(@"[IOS26CCStyle] Optional Control Center class %s is unavailable; skipping its hooks.",
-              className);
-    }
-    return cls;
-}
-
-static BOOL InstallHook(Class cls, SEL sel, IMP replacement, IMP *original) {
     if (!cls) return NO;
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return NO;
 
-    Method own = OwnInstanceMethod(cls, sel);
-    IMP orig = NULL;
-    if (own) {
-        // This selector belongs to the target class, so replace only its own IMP.
-        orig = method_setImplementation(own, replacement);
-    } else {
-        // The selector is inherited. Add an override to this class and leave the
-        // superclass's Method untouched.
-        Method inherited = class_getInstanceMethod(cls, sel);
-        if (!inherited) return NO;
-        if (class_addMethod(cls, sel, replacement, method_getTypeEncoding(inherited))) {
-            orig = method_getImplementation(inherited);
-        } else {
-            // If another installer added the override between the checks, re-read
-            // only this class's method list. Never mutate the inherited Method.
-            own = OwnInstanceMethod(cls, sel);
-            if (!own) return NO;
-            orig = method_setImplementation(own, replacement);
-        }
+    IMP orig = method_getImplementation(m);
+    if (!class_addMethod(cls, sel, replacement, method_getTypeEncoding(m))) {
+        // The class implements the method itself: swap it in place.
+        orig = method_setImplementation(m, replacement);
     }
     *original = orig;
     return orig != NULL;
@@ -1091,15 +888,13 @@ static BOOL InstallHook(Class cls, SEL sel, IMP replacement, IMP *original) {
         ApplyStyle(self, KIND);                                                     \
         ScheduleReapply(self, KIND);                                                \
     }                                                                               \
-    static void Install_##TAG(const char *className) {                                \
-        Class targetClass = ResolveHookClass(className);                             \
-        if (!targetClass) return;                                                    \
+    static void Install_##TAG(const char *cls) {                                    \
         IMP o1 = NULL, o2 = NULL;                                                   \
-        if (InstallHook(targetClass, @selector(layoutSubviews),                    \
+        if (InstallHook(cls, @selector(layoutSubviews),                             \
                         (IMP)new_layout_##TAG, &o1)) {                              \
             orig_layout_##TAG = (void (*)(UIView *, SEL))o1;                        \
         }                                                                           \
-        if (InstallHook(targetClass, @selector(didMoveToWindow),                   \
+        if (InstallHook(cls, @selector(didMoveToWindow),                            \
                         (IMP)new_window_##TAG, &o2)) {                              \
             orig_window_##TAG = (void (*)(UIView *, SEL))o2;                        \
         }                                                                           \
@@ -1109,7 +904,6 @@ DEFINE_HOOKS(ModuleFill,   CCKindModuleFill)
 DEFINE_HOOKS(Container,    CCKindContainer)
 DEFINE_HOOKS(Template,     CCKindModule)
 DEFINE_HOOKS(ButtonModule, CCKindModule)
-DEFINE_HOOKS(HeaderPocket, CCKindRound)
 DEFINE_HOOKS(Accessory,    CCKindRound)
 DEFINE_HOOKS(Power,        CCKindRound)
 DEFINE_HOOKS(Round,        CCKindRound)
@@ -1145,7 +939,6 @@ static void IOS26CCStyleInit(void) {
         Install_Container   ("CCUIContentModuleContentContainerView");
         Install_Template    ("CCUIControlTemplateView");
         Install_ButtonModule("CCUIButtonModuleView");
-        Install_HeaderPocket("CCUIHeaderPocketView");
         Install_Accessory   ("CCUIAccessoryButton");
         Install_Power       ("CCUIPowerButton");
         Install_Round       ("CCUIRoundButton");
