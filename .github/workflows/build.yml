@@ -38,8 +38,11 @@ jobs:
           dpkg-deb -c packages/*.deb | grep -q "MobileSubstrate/DynamicLibraries/IOS26CCBackboardd.dylib" || { echo "ERROR: backboardd dylib missing"; exit 1; }
           dpkg-deb -c packages/*.deb | grep -q "MobileSubstrate/DynamicLibraries/IOS26CCBackboardd.plist" || { echo "ERROR: backboardd filter plist missing"; exit 1; }
 
+      - name: Read version
+        run: echo "PKG_VERSION=$(sed -n 's/^Version: //p' control)" >> "$GITHUB_ENV"
+
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: IOS26CCStyle-rootless-deb-v0.1.4
+          name: IOS26CCStyle-rootless-deb-v${{ env.PKG_VERSION }}
           path: packages/*.deb
