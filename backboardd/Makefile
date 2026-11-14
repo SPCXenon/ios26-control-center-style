@@ -1,3 +1,6 @@
+ARCHS = arm64e
+TARGET := iphone:clang:16.5:15.0
+
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = IOS26CCBackboardd
