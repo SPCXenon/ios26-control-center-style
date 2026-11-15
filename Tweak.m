@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.11
+// IOS26CCStyle 0.2.12
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -151,8 +151,6 @@ static const void *kShadeKey   = &kShadeKey;   // top-lit sphere shading (circle
 static const void *kBgTimerKey = &kBgTimerKey; // on the window: backdrop re-check pending
 static const void *kBgTargetKey = &kBgTargetKey; // on the backdrop view: alpha we set
 static const void *kStyledKey = &kStyledKey; // set on views styled through a class hook
-static void MotionContainer(UIView *v);
-static void MotionMenu(UIView *v, BOOL visible);
 static const void *kMenuKey   = &kMenuKey;   // set on views decorated by the menu walk
 static const void *kLastRKey  = &kLastRKey;  // corner radius we applied last
 static const void *kSysRKey   = &kSysRKey;   // corner radius the system had set
@@ -467,11 +465,9 @@ static void ApplyMenuDecor(UIView *v) {
 
     if (!gEnabled || !gStyleMenus || !candidate) {
         if (flagged) HideDecor(v);
-        MotionMenu(v, NO);
         return;
     }
     objc_setAssociatedObject(v, kMenuKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    MotionMenu(v, YES);
     ApplyDecor(v, b, MIN(layer.cornerRadius, MIN(b.size.width, b.size.height) / 2.0));
 
     if (!gTracked) gTracked = [NSHashTable weakObjectsHashTable];
@@ -935,7 +931,6 @@ static void StyleOnFillsTop(UIView *v, CGFloat radius, BOOL dark) {
 }
 
 static void ApplyStyle(UIView *v, CCKind kind) {
-    if (kind == CCKindContainer) MotionContainer(v);
     if (!v.window) return;
     ApplyBackground(v);
     if (!gEnabled || !KindEnabled(kind)) {
@@ -1103,62 +1098,6 @@ static void MotionToggle(UIView *v, BOOL on) {
 }
 
 
-static const void *kMenuShownKey = &kMenuShownKey;
-static const void *kLastSizeKey  = &kLastSizeKey;
-
-// Popup menus (Focus, Wi-Fi, Bluetooth ...) grow out of the side of the screen they belong to
-// with a springy overshoot, like iOS 27, instead of just fading in.
-static void MotionMenu(UIView *v, BOOL visible) {
-    BOOL was = [objc_getAssociatedObject(v, kMenuShownKey) boolValue];
-    if (visible == was) return;
-    objc_setAssociatedObject(v, kMenuShownKey, @(visible), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if (!visible || !gMotion || !gEnabled || !v.window) return;
-    CGRect b = v.bounds;
-    CGRect inWin = [v convertRect:b toView:nil];
-    CGFloat screenW = v.window.bounds.size.width;
-    CGPoint anchor = CGPointMake(CGRectGetMidX(inWin) < screenW / 2 ? CGRectGetMinX(inWin) : CGRectGetMaxX(inWin),
-                                 CGRectGetMinY(inWin));
-    CGPoint center = CGPointMake(CGRectGetMidX(inWin), CGRectGetMidY(inWin));
-    CGFloat s = 0.55;
-    CATransform3D from = CATransform3DMakeTranslation((anchor.x - center.x) * (1 - s), (anchor.y - center.y) * (1 - s), 0);
-    from = CATransform3DScale(from, s, s, 1);
-    CASpringAnimation *a = [CASpringAnimation animationWithKeyPath:@"transform"];
-    a.fromValue = [NSValue valueWithCATransform3D:from];
-    a.toValue = [NSValue valueWithCATransform3D:CATransform3DIdentity];
-    a.mass = 1; a.damping = 15; a.stiffness = 340; a.initialVelocity = 0;
-    a.duration = a.settlingDuration;
-    [v.layer addAnimation:a forKey:@"xc.menu"];
-    CABasicAnimation *f = [CABasicAnimation animationWithKeyPath:@"opacity"];
-    f.fromValue = @0; f.toValue = @(v.layer.opacity); f.duration = 0.16;
-    [v.layer addAnimation:f forKey:@"xc.menu.fade"];
-}
-
-// A module opening up (tile -> expanded panel): the glass settles with a spring overshoot and the
-// corner radius eases to its new value instead of snapping.
-static void MotionContainer(UIView *v) {
-    CGSize now = v.bounds.size;
-    NSValue *prevV = objc_getAssociatedObject(v, kLastSizeKey);
-    objc_setAssociatedObject(v, kLastSizeKey, [NSValue valueWithCGSize:now], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if (!gMotion || !gEnabled || !prevV || !v.window) return;
-    CGSize prev = prevV.CGSizeValue;
-    if (prev.width < 20 || prev.height < 20) return;
-    BOOL grew   = now.width * now.height > prev.width * prev.height * 1.5;
-    BOOL shrank = now.width * now.height * 1.5 < prev.width * prev.height;
-    if (!grew && !shrank) return;
-    CASpringAnimation *a = Spring(@"transform.scale", grew ? 0.93 : 1.05, 1.0, 11, 230);
-    [v.layer addAnimation:a forKey:@"xc.morph"];
-    CGFloat r = v.layer.cornerRadius;
-    if (r > 1) {
-        CGFloat fromR = MIN(prev.width, prev.height) / 2.0;
-        if (fromR > 1 && fabs(fromR - r) > 2) {
-            CABasicAnimation *c = [CABasicAnimation animationWithKeyPath:@"cornerRadius"];
-            c.fromValue = @(MIN(fromR, 32.0)); c.toValue = @(r); c.duration = 0.35;
-            c.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.2 :0.9 :0.2 :1.0];
-            [v.layer addAnimation:c forKey:@"xc.morph.r"];
-        }
-    }
-}
-
 static BOOL OnFillVisible(UIView *v, int depth) {
     if (depth > 3) return NO;
     for (UIView *s in v.subviews) {
@@ -1187,9 +1126,38 @@ static BOOL OnFillVisible(UIView *v, int depth) {
 // Records which Control Center views get which animations (class, key, key path, duration) so the
 // stock expand / menu animations can be located and switched off. Only active with debug dump on.
 
+// The stock module expand / collapse and menu animations are 0.4 s spring animations on position,
+// bounds, corner radius and transform of every view involved. They are replaced in place by the
+// same animation (same from/to values) with iOS 27 spring parameters, so the whole morph (panel,
+// glass, sliders, menu rows) stays consistent and there is only one animation, not two.
+static BOOL IsExpandContext(UIView *v) {
+    for (UIView *a = v; a; a = a.superview) {
+        NSString *n = NSStringFromClass(a.class);
+        if ([n isEqualToString:@"CCUIContentModuleContentContainerView"] || [n hasPrefix:@"FCUI"] || [n hasPrefix:@"MRU"] ||
+            [n isEqualToString:@"CCUIContentModuleBackgroundView"]) return YES;
+    }
+    return NO;
+}
+
+static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
+    if (!gMotion || !gEnabled || ![anim isKindOfClass:CASpringAnimation.class]) return anim;
+    if (anim.duration < 0.3 || anim.duration > 0.55) return anim;
+    id del = layer.delegate;
+    if (![del isKindOfClass:UIView.class]) return anim;
+    NSString *kp = ((CAPropertyAnimation *)anim).keyPath;
+    static NSSet *ok;
+    if (!ok) ok = [NSSet setWithArray:@[@"position", @"bounds.size", @"bounds.origin", @"bounds", @"cornerRadius", @"transform"]];
+    if (![ok containsObject:kp] || !IsExpandContext(del)) return anim;
+    CASpringAnimation *c = [anim copy];
+    c.mass = 1.0; c.stiffness = 380.0; c.damping = 26.0;
+    c.duration = c.settlingDuration;
+    return c;
+}
+
 static void (*orig_addAnimation)(CALayer *, SEL, CAAnimation *, NSString *);
 static void new_addAnimation(CALayer *self, SEL _cmd, CAAnimation *anim, NSString *key) {
-    orig_addAnimation(self, _cmd, anim, key);
+    CAAnimation *use = [key hasPrefix:@"xc."] ? anim : RetuneStockSpring(self, anim);
+    orig_addAnimation(self, _cmd, use, key);
     if (!gDebugDump || [key hasPrefix:@"xc."]) return;
     id d = self.delegate;
     if (![d isKindOfClass:UIView.class]) return;
