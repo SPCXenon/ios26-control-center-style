@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.6
+// IOS26CCStyle 0.2.7
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -805,6 +805,11 @@ static void SyncGlass(UIView *v, CCKind kind, CGFloat radius, BOOL dark, BOOL en
 // Enabled (selected) toggles: iOS 18 shows them as a nearly opaque white fill drawn by a
 // child of the button module, which hides the glass behind it. Round it like the shell and
 // let the backdrop show through (iOS 26 "on" tiles are frosted, not solid).
+@interface XCOnFillView : UIView
+@end
+@implementation XCOnFillView
+@end
+
 static const void *kOnFillKey = &kOnFillKey;   // on the fill view: its stock backgroundColor
 
 static BOOL LooksLikeOnFill(UIView *s, CGSize parent) {
@@ -819,13 +824,38 @@ static BOOL LooksLikeOnFill(UIView *s, CGSize parent) {
     return c && [c getWhite:&w alpha:&a] && w > 0.7 && a > 0.3;
 }
 
-static void StyleOnFills(UIView *v, CGFloat radius, BOOL dark, NSMutableString *dump, int depth) {
-    if (depth > 3) return;
+static void DumpTree(UIView *v, int depth, NSMutableString *dump) {
+    if (depth > 5) return;
     for (UIView *s in v.subviews) {
-        if (dump) {
-            [dump appendFormat:@"%*s%@ %@ a=%.2f hidden=%d bg=%@ comp=%@\n", depth * 2, "", NSStringFromClass(s.class),
-             NSStringFromCGRect(s.frame), s.alpha, s.hidden, s.backgroundColor, s.layer.compositingFilter];
+        NSString *extra = @"";
+        if ([s isKindOfClass:UILabel.class]) {
+            UILabel *l = (UILabel *)s; CGFloat w = -1, a = 0;
+            [l.textColor getWhite:&w alpha:&a];
+            extra = [NSString stringWithFormat:@" text=\"%@\" textWhite=%.2f", l.text, w];
         }
+        [dump appendFormat:@"%*s%@ %@ a=%.2f hidden=%d bg=%@ comp=%@%@\n", depth * 2, "", NSStringFromClass(s.class),
+         NSStringFromCGRect(s.frame), s.alpha, s.hidden, s.backgroundColor, s.layer.compositingFilter, extra];
+        DumpTree(s, depth + 1, dump);
+    }
+}
+
+static UILabel *FirstLabel(UIView *v, int depth) {
+    if (depth > 4) return nil;
+    for (UIView *s in v.subviews) {
+        if ([s isKindOfClass:UILabel.class] && ((UILabel *)s).text.length) return (UILabel *)s;
+        UILabel *l = FirstLabel(s, depth + 1);
+        if (l) return l;
+    }
+    return nil;
+}
+
+static const void *kSynthFillKey = &kSynthFillKey;   // our own fill view, for tiles with no system fill
+
+// Returns the number of system on-fills that were restyled.
+static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
+    if (depth > 4) return 0;
+    int n = 0;
+    for (UIView *s in v.subviews) {
         if (LooksLikeOnFill(s, v.bounds.size)) {
             // Never touch the view's alpha: CCUI animates it 0 <-> 1 as the toggle turns on/off,
             // so any cached or scaled alpha leaves enabled tiles empty or grey. Only soften the
@@ -842,22 +872,53 @@ static void StyleOnFills(UIView *v, CGFloat radius, BOOL dark, NSMutableString *
             if (!(s.backgroundColor && [s.backgroundColor getWhite:&w alpha:&ca] && fabs(ca - fa) < 0.005 && w > 0.99)) {
                 s.backgroundColor = [UIColor colorWithWhite:1.0 alpha:fa];
             }
+            n++;
             continue;
         }
-        if (s.subviews.count && s.bounds.size.width * s.bounds.size.height > 400) StyleOnFills(s, radius, dark, dump, depth + 1);
+        if (s.subviews.count && s.bounds.size.width * s.bounds.size.height > 400) n += StyleOnFills(s, radius, dark, depth + 1);
     }
+    return n;
+}
+
+// Some tiles (Orientation Lock) turn their label dark when enabled but get no system fill view,
+// which leaves dark text on a dark tile. Give those tiles a fill of our own, matching the look of
+// the other enabled tiles, and remove it again when the label turns light.
+static void SyncSynthFill(UIView *v, CGFloat radius, BOOL dark, BOOL systemFillPresent) {
+    UIView *fill = objc_getAssociatedObject(v, kSynthFillKey);
+    UILabel *label = systemFillPresent ? nil : FirstLabel(v, 0);
+    CGFloat w = 1.0, a = 0;
+    BOOL enabledLook = label && [label.textColor getWhite:&w alpha:&a] && w < 0.4 && a > 0.3;
+    if (!enabledLook) { if (fill) fill.hidden = YES; return; }
+    if (!fill) {
+        fill = [[XCOnFillView alloc] init];
+        fill.userInteractionEnabled = NO;
+        [v insertSubview:fill atIndex:0];
+        objc_setAssociatedObject(v, kSynthFillKey, fill, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    fill.hidden = NO;
+    fill.frame = v.bounds;
+    fill.layer.cornerCurve = gContinuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
+    fill.layer.cornerRadius = radius;
+    fill.layer.masksToBounds = YES;
+    fill.backgroundColor = [UIColor colorWithWhite:1.0 alpha:(dark ? 0.94 : 0.97) - 0.10 * gGlass];
 }
 
 static void StyleOnFillsTop(UIView *v, CGFloat radius, BOOL dark) {
     static NSUInteger dumpGen = (NSUInteger)-1;
-    NSMutableString *dump = nil;
-    if (gDebugDump && dumpGen != gGeneration && v.bounds.size.height < 120) {
-        dumpGen = gGeneration;
-        dump = [NSMutableString stringWithFormat:@"module %@ %@ r=%.1f\n", NSStringFromClass(v.class), NSStringFromCGRect(v.bounds), radius];
+    static NSMutableString *acc; static int dumped;
+    static NSHashTable *seen;
+    if (gDebugDump && v.bounds.size.height < 120) {
+        if (dumpGen != gGeneration) { dumpGen = gGeneration; acc = [NSMutableString string]; dumped = 0; seen = [NSHashTable weakObjectsHashTable]; }
+        if (dumped < 20 && ![seen containsObject:v]) {
+            [seen addObject:v]; dumped++;
+            [acc appendFormat:@"module %@ %@ r=%.1f own-bg=%@\n", NSStringFromClass(v.class), NSStringFromCGRect(v.bounds), radius, v.backgroundColor];
+            DumpTree(v, 1, acc);
+            [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt" atomically:YES
+                    encoding:NSUTF8StringEncoding error:NULL];
+        }
     }
-    StyleOnFills(v, radius, dark, dump, 1);
-    if (dump) [dump writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt" atomically:YES
-                       encoding:NSUTF8StringEncoding error:NULL];
+    int n = StyleOnFills(v, radius, dark, 1);
+    SyncSynthFill(v, radius, dark, n > 0);
 }
 
 static void ApplyStyle(UIView *v, CCKind kind) {
