@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.7
+// IOS26CCStyle 0.2.8
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -903,20 +903,24 @@ static void SyncSynthFill(UIView *v, CGFloat radius, BOOL dark, BOOL systemFillP
     fill.backgroundColor = [UIColor colorWithWhite:1.0 alpha:(dark ? 0.94 : 0.97) - 0.10 * gGlass];
 }
 
-static void StyleOnFillsTop(UIView *v, CGFloat radius, BOOL dark) {
+// Debug dump of the view hierarchy of each module / round button, once per object.
+static void DumpViewOnce(UIView *v, CGFloat radius, const char *tag) {
     static NSUInteger dumpGen = (NSUInteger)-1;
     static NSMutableString *acc; static int dumped;
     static NSHashTable *seen;
-    if (gDebugDump && v.bounds.size.height < 120) {
-        if (dumpGen != gGeneration) { dumpGen = gGeneration; acc = [NSMutableString string]; dumped = 0; seen = [NSHashTable weakObjectsHashTable]; }
-        if (dumped < 20 && ![seen containsObject:v]) {
-            [seen addObject:v]; dumped++;
-            [acc appendFormat:@"module %@ %@ r=%.1f own-bg=%@\n", NSStringFromClass(v.class), NSStringFromCGRect(v.bounds), radius, v.backgroundColor];
-            DumpTree(v, 1, acc);
-            [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt" atomically:YES
-                    encoding:NSUTF8StringEncoding error:NULL];
-        }
-    }
+    if (!gDebugDump || v.bounds.size.height > 200) return;
+    if (dumpGen != gGeneration) { dumpGen = gGeneration; acc = [NSMutableString string]; dumped = 0; seen = [NSHashTable weakObjectsHashTable]; }
+    if (dumped >= 40 || [seen containsObject:v]) return;
+    [seen addObject:v]; dumped++;
+    [acc appendFormat:@"%s %@ %@ r=%.1f curve=%@ own-bg=%@ layer-bg=%@\n", tag, NSStringFromClass(v.class), NSStringFromCGRect(v.bounds), radius,
+     v.layer.cornerCurve, v.backgroundColor, (__bridge id)v.layer.backgroundColor];
+    DumpTree(v, 1, acc);
+    [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt" atomically:YES
+            encoding:NSUTF8StringEncoding error:NULL];
+}
+
+static void StyleOnFillsTop(UIView *v, CGFloat radius, BOOL dark) {
+    DumpViewOnce(v, radius, "module");
     int n = StyleOnFills(v, radius, dark, 1);
     SyncSynthFill(v, radius, dark, n > 0);
 }
@@ -981,6 +985,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     }
 
     if (kind == CCKindModule) StyleOnFillsTop(v, r, darkUI);
+    else if (kind == CCKindRound) DumpViewOnce(v, r, "round");
 
     ApplyDecor(v, b, r);
 

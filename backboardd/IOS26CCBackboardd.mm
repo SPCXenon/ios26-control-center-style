@@ -344,6 +344,13 @@ typedef struct {
     simd_float4 tintColor;
 } LGUniforms;
 
+// The render entry point has more arguments than the 11 we model. They are passed on the stack and
+// were previously dropped, so QuartzCore read whatever happened to be on our stack (which crashed
+// custom renders). Carry 8 extra stack slots through every forwarding call, unchanged.
+#define LG_EXTRA_PARAMS , uint64_t e0, uint64_t e1, uint64_t e2, uint64_t e3, uint64_t e4, uint64_t e5, uint64_t e6, uint64_t e7
+#define LG_EXTRA_ARGS   , e0, e1, e2, e3, e4, e5, e6, e7
+#define LG_EXTRA_TYPES  , uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t
+#define LG_EXTRA_ZERO   , 0, 0, 0, 0, 0, 0, 0, 0
 typedef void (*Render13Fn)(void*,
                            void*,
                            void*,
@@ -354,7 +361,8 @@ typedef void (*Render13Fn)(void*,
                            bool,
                            void*,
                            void*,
-                           float*);
+                           float*
+                           LG_EXTRA_TYPES);
 typedef void (*Render14Fn)(void*,
                            void*,
                            void*,
@@ -1347,7 +1355,7 @@ static void lgStartPrefsObserver(void) {
 
 static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
                                float opacity, void *surface, float scale,
-                               bool flag, void *cm, void *shape, float *out)
+                               bool flag, void *cm, void *shape, float *out LG_EXTRA_PARAMS)
 {
     static uint64_t tsum_stop = 0, tsum_ours = 0, tsum_gauss = 0, tcount = 0;
     uint64_t t_start = mach_absolute_time();
@@ -1562,7 +1570,7 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
                        0.0f, g_legacyRenderOffset, cm, shape, out);
     } else if (g_origGaussR13) {
         g_origGaussR13(self, filter, layer, ctx, opacity, surface,
-                       0.0f, flag, cm, shape, out);
+                       scale, flag, cm, shape, out LG_EXTRA_ARGS);
     }
     uint64_t t_afterGauss = mach_absolute_time();
     R13TRACE("R13[%llu] after g_origGaussR13", callN);
@@ -1710,7 +1718,7 @@ static uint64_t ourGaussianEdgeInfoHook(void *self, void *filter, void *layer,
 
 static void ourGaussianRenderHook(void *self, void *filter, void *layer, void *ctx,
                                   float opacity, void *surface, float scale,
-                                  bool flag, void *cm, void *shape, float *out) {
+                                  bool flag, void *cm, void *shape, float *out LG_EXTRA_PARAMS) {
     uint32_t atom = filter
         ? *(uint32_t *)((uint8_t *)filter + g_filterAtomOffset) : 0;
     if (lgIsCustomAtom(atom)) {
@@ -1720,7 +1728,7 @@ static void ourGaussianRenderHook(void *self, void *filter, void *layer, void *c
                   atom, self, filter);
         }
         ourCustomRender13(self, filter, layer, ctx, opacity, surface,
-                          scale, flag, cm, shape, out);
+                          scale, flag, cm, shape, out LG_EXTRA_ARGS);
         return;
     }
     static int loggedStockDispatch = 0;
@@ -1730,7 +1738,7 @@ static void ourGaussianRenderHook(void *self, void *filter, void *layer, void *c
     }
     if (g_origGaussR13) {
         g_origGaussR13(self, filter, layer, ctx, opacity, surface,
-                       scale, flag, cm, shape, out);
+                       scale, flag, cm, shape, out LG_EXTRA_ARGS);
     }
 }
 
@@ -1749,7 +1757,7 @@ static void ourGaussianRender14Hook(void *self, void *filter, void *layer, void 
         g_inLegacyRender = true;
         g_legacyRenderOffset = offset;
         ourCustomRender13(self, filter, layer, ctx, opacity, surface,
-                          scale, false, cm, shape, out);
+                          scale, false, cm, shape, out LG_EXTRA_ZERO);
         g_inLegacyRender = false;
         return;
     }
