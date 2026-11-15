@@ -8,6 +8,41 @@ extern char **environ;
 @interface IOS26CCRootListController : PSListController
 @end
 
+
+// On-device log viewer: lets the logs be read, copied or saved without a computer.
+@interface IOS26CCLogViewController : UIViewController
+@property (nonatomic, copy) NSString *text;
+@end
+
+@implementation IOS26CCLogViewController {
+    UITextView *_tv;
+}
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Logs";
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    _tv = [[UITextView alloc] initWithFrame:self.view.bounds];
+    _tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _tv.editable = NO;
+    _tv.alwaysBounceVertical = YES;
+    _tv.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
+    _tv.text = self.text;
+    [self.view addSubview:_tv];
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
+    self.navigationItem.rightBarButtonItems = @[
+        [[UIBarButtonItem alloc] initWithTitle:@"Copy" style:UIBarButtonItemStylePlain target:self action:@selector(copyAll)],
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAction target:self action:@selector(share:)],
+    ];
+}
+- (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (void)copyAll { UIPasteboard.generalPasteboard.string = self.text; }
+- (void)share:(UIBarButtonItem *)item {
+    UIActivityViewController *v = [[UIActivityViewController alloc] initWithActivityItems:@[self.text] applicationActivities:nil];
+    v.popoverPresentationController.barButtonItem = item;
+    [self presentViewController:v animated:YES completion:nil];
+}
+@end
+
 @implementation IOS26CCRootListController
 
 - (NSArray *)specifiers {
@@ -50,6 +85,26 @@ static BOOL RunTool(NSArray<NSString *> *paths, NSArray<NSString *> *args) {
         [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:a animated:YES completion:nil];
     }
+}
+
+- (void)viewLogs {
+    NSString *acc = @"/var/mobile/Library/Accessibility/";
+    NSArray<NSArray<NSString *> *> *files = @[
+        @[@"crash report", [acc stringByAppendingString:@"xenonglass-crash.log"]],
+        @[@"previous session log", [acc stringByAppendingString:@"xenonglass-previous.log"]],
+        @[@"current session log", [acc stringByAppendingString:@"xenonglass.log"]],
+        @[@"view dump", @"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt"],
+    ];
+    NSMutableString *all = [NSMutableString string];
+    for (NSArray<NSString *> *f in files) {
+        NSString *t = [NSString stringWithContentsOfFile:f[1] encoding:NSUTF8StringEncoding error:NULL];
+        if (t.length > 40000) t = [@"...\n" stringByAppendingString:[t substringFromIndex:t.length - 40000]];
+        [all appendFormat:@"===== %@ =====\n%@\n\n", f[0], t.length ? t : @"(missing, empty or not readable from Settings)"];
+    }
+    IOS26CCLogViewController *vc = [IOS26CCLogViewController new];
+    vc.text = all;
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+    [self presentViewController:nav animated:YES completion:nil];
 }
 
 - (void)resetDefaults {

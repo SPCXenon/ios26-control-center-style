@@ -768,6 +768,14 @@
 		</dict>
 		<dict>
 			<key>action</key>
+			<string>viewLogs</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>View logs and crash report</string>
+		</dict>
+		<dict>
+			<key>action</key>
 			<string>resetDefaults</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>

@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.5
+// IOS26CCStyle 0.2.6
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //

@@ -71,7 +71,7 @@ static void lgClearAccessibilityFiles(void) {
         if (strncmp(entry->d_name, "xenonglass", 10) != 0) continue;
         // keep the crash-loop guard and safe-mode notice across restarts
         if (strstr(entry->d_name, "guard") || strstr(entry->d_name, "safemode") ||
-            strstr(entry->d_name, "alert") || strstr(entry->d_name, "previous")) continue;
+            strstr(entry->d_name, "alert") || strstr(entry->d_name, "previous") || strstr(entry->d_name, "crash")) continue;
         char path[PATH_MAX] = {};
         snprintf(path, sizeof(path), "%s/%s", directoryPath, entry->d_name);
         unlink(path);
@@ -2147,6 +2147,114 @@ static bool registerCustomFilter(void) {
     return true;
 }
 
+
+// ---- on-device crash report -------------------------------------------------------------------
+// System crash logs may be switched off, so backboardd records its own report next to the renderer
+// log: signal, fault address, registers and a frame-pointer backtrace with image-relative offsets.
+#include <signal.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <ucontext.h>
+#include <mach-o/dyld.h>
+
+#define LG_CRASH_PATH "/var/mobile/Library/Accessibility/xenonglass-crash.log"
+struct LGCrashImage { uintptr_t base; char name[32]; };
+static LGCrashImage g_crashImages[1024];
+static int g_crashImageCount = 0;
+static struct sigaction g_crashOld[32];
+static char g_crashAltStack[64 * 1024];
+
+static void lgCrashStr(int fd, const char *s) { size_t n = 0; while (s[n]) n++; (void)!write(fd, s, n); }
+static void lgCrashHex(int fd, uint64_t v) {
+    char b[18]; b[0] = '0'; b[1] = 'x';
+    for (int i = 0; i < 16; i++) b[2 + i] = "0123456789abcdef"[(v >> (60 - 4 * i)) & 0xf];
+    (void)!write(fd, b, 18);
+}
+static void lgCrashDec(int fd, long v) {
+    char b[24]; int n = 0; bool neg = v < 0; unsigned long u = neg ? (unsigned long)-v : (unsigned long)v;
+    char t[24]; int k = 0; do { t[k++] = '0' + (u % 10); u /= 10; } while (u);
+    if (neg) b[n++] = '-';
+    while (k) b[n++] = t[--k];
+    (void)!write(fd, b, n);
+}
+static void lgCrashAddr(int fd, uint64_t a) {
+    lgCrashHex(fd, a);
+    const LGCrashImage *best = nullptr;
+    for (int i = 0; i < g_crashImageCount; i++) {
+        const LGCrashImage *im = &g_crashImages[i];
+        if (im->base <= a && (!best || im->base > best->base)) best = im;
+    }
+    if (best && a - best->base < 0x20000000ull) {
+        lgCrashStr(fd, "  "); lgCrashStr(fd, best->name); lgCrashStr(fd, "+"); lgCrashHex(fd, a - best->base);
+    }
+    lgCrashStr(fd, "\n");
+}
+static void lgCrashHandler(int sig, siginfo_t *si, void *ucv) {
+    ucontext_t *uc = (ucontext_t *)ucv;
+    int fd = open(LG_CRASH_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0 && uc && uc->uc_mcontext) {
+        lgCrashStr(fd, "==== backboardd crash: signal "); lgCrashDec(fd, sig);
+        lgCrashStr(fd, " code "); lgCrashDec(fd, si ? si->si_code : 0);
+        lgCrashStr(fd, " fault address "); lgCrashHex(fd, si ? (uint64_t)(uintptr_t)si->si_addr : 0);
+        lgCrashStr(fd, " time "); lgCrashDec(fd, (long)time(NULL)); lgCrashStr(fd, "\n");
+        _STRUCT_ARM_THREAD_STATE64 *ss = &uc->uc_mcontext->__ss;
+        uint64_t pc = (uint64_t)(uintptr_t)__darwin_arm_thread_state64_get_pc(*ss);
+        uint64_t lr = (uint64_t)(uintptr_t)__darwin_arm_thread_state64_get_lr(*ss);
+        uint64_t fp = (uint64_t)(uintptr_t)__darwin_arm_thread_state64_get_fp(*ss);
+        uint64_t sp = (uint64_t)(uintptr_t)__darwin_arm_thread_state64_get_sp(*ss);
+        lgCrashStr(fd, "pc  "); lgCrashAddr(fd, pc);
+        lgCrashStr(fd, "lr  "); lgCrashAddr(fd, lr & 0xfffffffffull);
+        lgCrashStr(fd, "sp  "); lgCrashHex(fd, sp); lgCrashStr(fd, "\n");
+        for (int i = 0; i < 29; i++) {
+            lgCrashStr(fd, "x"); lgCrashDec(fd, i); lgCrashStr(fd, " "); lgCrashHex(fd, ss->__x[i]);
+            lgCrashStr(fd, (i % 2) ? "\n" : "  ");
+        }
+        lgCrashStr(fd, "\nbacktrace:\n");
+        for (int i = 0; i < 40 && fp >= 0x10000 && !(fp & 7); i++) {
+            void *next = LGPeek((const void *)(uintptr_t)fp);
+            void *ret  = LGPeek((const void *)(uintptr_t)(fp + 8));
+            if (!ret) break;
+            lgCrashStr(fd, "  "); lgCrashDec(fd, i); lgCrashStr(fd, " ");
+            lgCrashAddr(fd, (uint64_t)(uintptr_t)ret & 0xfffffffffull);
+            if ((uint64_t)(uintptr_t)next <= fp) break;
+            fp = (uint64_t)(uintptr_t)next;
+        }
+        lgCrashStr(fd, "\n");
+        close(fd);
+    }
+    sigaction(sig, &g_crashOld[sig], NULL);
+    if (sig != SIGSEGV && sig != SIGBUS && sig != SIGILL && sig != SIGFPE && sig != SIGTRAP) raise(sig);
+}
+static void lgCrashException(NSException *e) {
+    FILE *f = fopen(LG_CRASH_PATH, "a");
+    if (!f) return;
+    fprintf(f, "==== backboardd uncaught exception %s: %s\n", e.name.UTF8String, e.reason.UTF8String);
+    for (NSString *l in e.callStackSymbols) fprintf(f, "  %s\n", l.UTF8String);
+    fclose(f);
+}
+static void lgInstallCrashReporter(void) {
+    uint32_t n = _dyld_image_count();
+    for (uint32_t i = 0; i < n && g_crashImageCount < 1024; i++) {
+        const char *path = _dyld_get_image_name(i);
+        const char *slash = path ? strrchr(path, '/') : NULL;
+        const char *base = slash ? slash + 1 : (path ? path : "?");
+        LGCrashImage *im = &g_crashImages[g_crashImageCount++];
+        im->base = (uintptr_t)_dyld_get_image_header(i);
+        strlcpy(im->name, base, sizeof(im->name));
+    }
+    stack_t st = {}; st.ss_sp = g_crashAltStack; st.ss_size = sizeof(g_crashAltStack);
+    sigaltstack(&st, NULL);
+    struct sigaction sa = {};
+    sa.sa_sigaction = lgCrashHandler;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT, SIGTRAP };
+    for (int sig : sigs) sigaction(sig, &sa, &g_crashOld[sig]);
+    NSSetUncaughtExceptionHandler(&lgCrashException);
+    // sigaltstack is per thread: threads created later keep the default stack, which is fine for
+    // ordinary faults and only matters for stack overflows.
+}
+
 __attribute__((constructor))
 static void tweakInit(void) {
     @autoreleasepool {
@@ -2167,6 +2275,7 @@ static void tweakInit(void) {
         return;
     }
     { FILE *lf = fopen(LG_LOG_PATH, "w"); if (lf) fclose(lf); }
+    lgInstallCrashReporter();
 
     NSOperatingSystemVersion osv = NSProcessInfo.processInfo.operatingSystemVersion;
     g_skipGaussianIdentityHook = false;
