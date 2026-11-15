@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.13
+// IOS26CCStyle 0.2.14
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -444,11 +444,14 @@ static void ApplyExtraBlur(UIView *v, CGRect b) {
 // MARK: - Material clarity (iOS 27-style Clear ↔ Tinted) ----------------------
 
 // Dims the system blur material behind a view so the wallpaper shows through.
+static const void *kGlassKey = &kGlassKey;   // on the MTMaterialView: its XCGlassView
+static BOOL gOwnAlpha;                              // YES while the tweak itself writes a material alpha
+static const void *kStockAlphaKey = &kStockAlphaKey; // on the MTMaterialView: last alpha the system set
 static void SetMaterialAlpha(UIView *root, int depth, CGFloat alpha) {
     if (depth > 3) return;
     for (UIView *s in root.subviews) {
         if ([NSStringFromClass(s.class) containsString:@"MaterialView"]) {
-            if (fabs(s.alpha - alpha) > 0.001) s.alpha = alpha;
+            if (fabs(s.alpha - alpha) > 0.001) { gOwnAlpha = YES; s.alpha = alpha; gOwnAlpha = NO; }
             continue;
         }
         SetMaterialAlpha(s, depth + 1, alpha);
@@ -457,8 +460,15 @@ static void SetMaterialAlpha(UIView *root, int depth, CGFloat alpha) {
 
 // MARK: - Expanded menus ------------------------------------------------------
 
+// The expanded volume slider is just the pill; the wide MRUVolumeView around it must stay bare.
+static BOOL IsVolumeHost(UIView *v) {
+    NSString *n = NSStringFromClass(v.class);
+    return [n hasPrefix:@"MRU"] && [n containsString:@"Volume"];
+}
+
 static void ApplyMenuDecor(UIView *v) {
     if (!v.window) return;
+    if (IsVolumeHost(v)) { if (objc_getAssociatedObject(v, kMenuKey)) HideDecor(v); return; }
     CALayer *layer = v.layer;
     CGRect b = v.bounds;
     // Only views the system already rounds AND clips: the glass layers stay inside the shape.
@@ -482,6 +492,7 @@ static void WalkMenus(UIView *root, int depth, int *budget) {
     for (UIView *s in root.subviews) {
         if (*budget <= 0) return;
         (*budget)--;
+        if (IsVolumeHost(s)) { ApplyMenuDecor(s); continue; }
         if (!objc_getAssociatedObject(s, kStyledKey)) ApplyMenuDecor(s);
         WalkMenus(s, depth + 1, budget);
     }
@@ -571,6 +582,14 @@ static void hook_setAlpha(UIView *self, SEL _cmd, CGFloat a) {
     orig_setAlpha(self, _cmd, a);
     XCBlurView *b = objc_getAssociatedObject(self, kBlurViewKey);
     if (b) b.alpha = a;
+    if (!gOwnAlpha) {
+        // The system fades a material out when its content goes away (module expanding, menu
+        // closing). The glass that replaces the material must fade with it, inside the same
+        // animation block, or it stays behind as a ghost at the old size.
+        objc_setAssociatedObject(self, kStockAlphaKey, @(a), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        UIView *g = objc_getAssociatedObject(self, kGlassKey);
+        if (g) g.alpha = a;
+    }
 }
 
 static BOOL IsBgCandidate(UIView *s, UIWindow *w) {
@@ -635,7 +654,6 @@ static void ApplyBackground(UIView *v) {
 // shader that refracts what is behind it (see backboardd/). The system MTMaterialView
 // it replaces is hidden. The renderer announces itself with a marker file; without it
 // the plain CALayer look is used.
-static const void *kGlassKey = &kGlassKey;   // on the MTMaterialView: its XCGlassView
 
 static BOOL GlassRendererReady(void) {
     static CFTimeInterval last = -100.0;
@@ -766,6 +784,8 @@ static void RemoveGlass(UIView *mat) {
 
 static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int depth) {
     if (depth > 2) return;
+    NSString *rn = NSStringFromClass(root.class);
+    if ([rn hasPrefix:@"MRU"] && [rn containsString:@"Volume"]) want = NO;
     for (UIView *s in [root.subviews copy]) {
         if ([s isKindOfClass:XCGlassView.class]) continue;
         if (IsExactMaterial(s)) {
@@ -783,6 +803,8 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
                         NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                 }
             }
+            NSNumber *stockA = objc_getAssociatedObject(s, kStockAlphaKey);
+            if (stockA && fabs(g.alpha - stockA.doubleValue) > 0.001) g.alpha = stockA.doubleValue;
             if (g.superview != root) [root insertSubview:g aboveSubview:s];
             if (!CGRectEqualToRect(g.frame, s.frame)) g.frame = s.frame;
             g.layer.cornerCurve = kCACornerCurveContinuous;
@@ -860,6 +882,10 @@ static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
     if (depth > 4) return 0;
     int n = 0;
     for (UIView *s in v.subviews) {
+        NSString *sn = NSStringFromClass(s.class);
+        // Round buttons inside a tile (Cellular, Hotspot, ...) draw their own circle and tint;
+        // restyling their white base view changed its shape and colour.
+        if ([sn containsString:@"RoundButton"] || [sn containsString:@"GlyphWrapper"] || [sn containsString:@"IconView"]) continue;
         if (LooksLikeOnFill(s, v.bounds.size)) {
             // Never touch the view's alpha: CCUI animates it 0 <-> 1 as the toggle turns on/off,
             // so any cached or scaled alpha leaves enabled tiles empty or grey. Only soften the
@@ -908,15 +934,18 @@ static void SyncSynthFill(UIView *v, CGFloat radius, BOOL dark, BOOL systemFillP
 }
 
 // Debug dump of the view hierarchy of each module / round button, once per object.
+static BOOL OnFillVisible(UIView *v, int depth);
 static void DumpViewOnce(UIView *v, CGFloat radius, const char *tag) {
     static NSUInteger dumpGen = (NSUInteger)-1;
     static NSMutableString *acc; static int dumped;
-    static NSHashTable *seen;
+    static NSMapTable *seen;   // view -> last dumped on/off state, so both states of a tile are captured
     if (!gDebugDump || v.bounds.size.height > 200) return;
-    if (dumpGen != gGeneration) { dumpGen = gGeneration; acc = [NSMutableString string]; dumped = 0; seen = [NSHashTable weakObjectsHashTable]; }
-    if (dumped >= 40 || [seen containsObject:v]) return;
-    [seen addObject:v]; dumped++;
-    [acc appendFormat:@"%s %@ %@ r=%.1f curve=%@ own-bg=%@ layer-bg=%@\n", tag, NSStringFromClass(v.class), NSStringFromCGRect(v.bounds), radius,
+    if (dumpGen != gGeneration) { dumpGen = gGeneration; acc = [NSMutableString string]; dumped = 0; seen = [NSMapTable weakToStrongObjectsMapTable]; }
+    NSNumber *st = @(OnFillVisible(v, 0));
+    NSNumber *prev = [seen objectForKey:v];
+    if (dumped >= 70 || (prev && [prev isEqual:st])) return;
+    [seen setObject:st forKey:v]; dumped++;
+    [acc appendFormat:@"%s [%@] %@ %@ r=%.1f curve=%@ own-bg=%@ layer-bg=%@\n", tag, st.boolValue ? @"ON" : @"off", NSStringFromClass(v.class), NSStringFromCGRect(v.bounds), radius,
      v.layer.cornerCurve, v.backgroundColor, (__bridge id)v.layer.backgroundColor];
     DumpTree(v, 1, acc);
     [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt" atomically:YES
@@ -931,6 +960,32 @@ static void StyleOnFillsTop(UIView *v, CGFloat radius, BOOL dark) {
     int n = StyleOnFills(v, radius, dark, 1);
     SyncSynthFill(v, radius, dark, n > 0);
     if (n > 0) MotionToggle(v, OnFillVisible(v, 0));
+}
+
+// Debug: the whole subtree of an expanded module (Now Playing, volume, ...), to see which view
+// owns a leftover rim or glass layer. Written at most once per second, last write wins.
+static void DumpExpandedTree(UIView *v, int depth, NSMutableString *out) {
+    if (depth > 6) return;
+    for (UIView *s in v.subviews) {
+        CALayer *l = s.layer;
+        [out appendFormat:@"%*s%@ %@ a=%.2f hidden=%d clip=%d r=%.1f%@%@%@\n", depth * 2, "", NSStringFromClass(s.class),
+         NSStringFromCGRect(s.frame), s.alpha, s.hidden, l.masksToBounds, l.cornerRadius,
+         objc_getAssociatedObject(s, kMenuKey) ? @" [menu-decor]" : @"",
+         objc_getAssociatedObject(s, kGlassKey) ? @" [has-glass]" : @"",
+         objc_getAssociatedObject(s, kStyledKey) ? @" [styled]" : @""];
+        DumpExpandedTree(s, depth + 1, out);
+    }
+}
+
+static void DumpExpanded(UIView *v) {
+    static CFAbsoluteTime last;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (!gDebugDump || now - last < 1.0 || v.bounds.size.height < 200) return;
+    last = now;
+    NSMutableString *out = [NSMutableString stringWithFormat:@"%@ %@\n", NSStringFromClass(v.class), NSStringFromCGRect(v.bounds)];
+    DumpExpandedTree(v, 1, out);
+    [out writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-expanded-dump.txt" atomically:YES
+            encoding:NSUTF8StringEncoding error:NULL];
 }
 
 static void ApplyStyle(UIView *v, CCKind kind) {
@@ -1000,7 +1055,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     if (!gTracked) gTracked = [NSHashTable weakObjectsHashTable];
     [gTracked addObject:v];
 
-    if (kind == CCKindContainer) DecorateMenus(v);
+    if (kind == CCKindContainer) { DecorateMenus(v); DumpExpanded(v); }
 }
 
 // CCUI occasionally resets its own corner radius right after the view lands in a
