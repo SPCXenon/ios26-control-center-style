@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.12
+// IOS26CCStyle 0.2.13
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -19,6 +19,7 @@ static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
 // MARK: - Preferences ---------------------------------------------------------
 
 static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion;
+static double  gSpringK = 380.0, gSpringD = 26.0;   // iOS 27 animation spring (stiffness, damping)
 static BOOL    gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus;
 static CGFloat gMaxRadius;     // corner radius cap for modules (pt)
 static CGFloat gRim, gRimWidth;// rim light intensity 0…1, stroke width pt
@@ -109,6 +110,8 @@ static void LoadPrefs(void) {
     gContinuous    = PrefBool(@"continuousCorners", YES);
     gExtraBlur     = PrefBool(@"extraBlur", NO);
     gMotion        = PrefBool(@"motion", YES);
+    gSpringK       = MAX(50.0, PrefFloat(@"motionStiffness", 380.0));
+    gSpringD       = MAX(2.0, PrefFloat(@"motionDamping", 26.0));
     gMaxRadius     = (CGFloat)PrefDouble(@"maxRadius", 46.0, 16.0, 70.0);
     gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.9, 0.0, 1.0);
     gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.9, 0.3, 2.5);
@@ -1149,15 +1152,44 @@ static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
     if (!ok) ok = [NSSet setWithArray:@[@"position", @"bounds.size", @"bounds.origin", @"bounds", @"cornerRadius", @"transform"]];
     if (![ok containsObject:kp] || !IsExpandContext(del)) return anim;
     CASpringAnimation *c = [anim copy];
-    c.mass = 1.0; c.stiffness = 380.0; c.damping = 26.0;
+    c.mass = 1.0; c.stiffness = gSpringK; c.damping = gSpringD;
     c.duration = c.settlingDuration;
     return c;
+}
+
+// The rim / sheen layers we add are plain sublayers whose frame is set at layout time, so they
+// jump to the final size while the view itself springs there (the ghost outlines). Give them the
+// same spring on size and position as the view.
+static void FollowSizeAnimation(CALayer *layer, CAAnimation *anim) {
+    if (![anim isKindOfClass:CASpringAnimation.class]) return;
+    CASpringAnimation *sa = (CASpringAnimation *)anim;
+    if (![sa.keyPath isEqualToString:@"bounds.size"]) return;
+    id fromV = sa.fromValue, toV = sa.toValue;
+    if (![fromV isKindOfClass:NSValue.class] || ![toV isKindOfClass:NSValue.class]) return;
+    if (strcmp([(NSValue *)fromV objCType], @encode(CGSize)) != 0) return;
+    UIView *dv = (UIView *)layer.delegate;
+    static const void *const *keys[6];
+    const void *k[6] = { kEdgesKey, kHotTLKey, kHotBRKey, kStreakKey, kSheenKey, kShadeKey };
+    (void)keys;
+    CGSize f = [fromV CGSizeValue], t = [toV CGSizeValue];
+    for (int i = 0; i < 6; i++) {
+        CALayer *l = objc_getAssociatedObject(dv, k[i]);
+        if (![l isKindOfClass:CALayer.class] || l.hidden) continue;
+        CASpringAnimation *c = [sa copy];
+        [l addAnimation:c forKey:@"xc.decor.size"];
+        CASpringAnimation *p = [sa copy];
+        p.keyPath = @"position";
+        p.fromValue = [NSValue valueWithCGPoint:CGPointMake(f.width / 2, f.height / 2)];
+        p.toValue = [NSValue valueWithCGPoint:CGPointMake(t.width / 2, t.height / 2)];
+        [l addAnimation:p forKey:@"xc.decor.pos"];
+    }
 }
 
 static void (*orig_addAnimation)(CALayer *, SEL, CAAnimation *, NSString *);
 static void new_addAnimation(CALayer *self, SEL _cmd, CAAnimation *anim, NSString *key) {
     CAAnimation *use = [key hasPrefix:@"xc."] ? anim : RetuneStockSpring(self, anim);
     orig_addAnimation(self, _cmd, use, key);
+    if (gMotion && gEnabled && ![key hasPrefix:@"xc."] && [self.delegate isKindOfClass:UIView.class]) FollowSizeAnimation(self, use);
     if (!gDebugDump || [key hasPrefix:@"xc."]) return;
     id d = self.delegate;
     if (![d isKindOfClass:UIView.class]) return;

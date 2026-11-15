@@ -788,9 +788,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Spring press feedback on tiles, buttons and sliders, and a pop when a toggle turns on.</string>
+			<string>Replaces the stock expand and menu springs, plus press feedback and a pop when a toggle turns on. Higher stiffness is faster; lower damping bounces more.</string>
 			<key>label</key>
-			<string>Motion</string>
+			<string>iOS 27 animation</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -805,6 +805,46 @@
 			<string>motion</string>
 			<key>label</key>
 			<string>iOS 27 motion</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>380</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>motionStiffness</string>
+			<key>label</key>
+			<string>Stiffness</string>
+			<key>max</key>
+			<real>800</real>
+			<key>min</key>
+			<real>100</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>26</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>motionDamping</string>
+			<key>label</key>
+			<string>Damping</string>
+			<key>max</key>
+			<real>60</real>
+			<key>min</key>
+			<real>5</real>
+			<key>showValue</key>
+			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
