@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.10
+// IOS26CCStyle 0.2.11
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -1153,7 +1153,7 @@ static void MotionContainer(UIView *v) {
         if (fromR > 1 && fabs(fromR - r) > 2) {
             CABasicAnimation *c = [CABasicAnimation animationWithKeyPath:@"cornerRadius"];
             c.fromValue = @(MIN(fromR, 32.0)); c.toValue = @(r); c.duration = 0.35;
-            c.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.2 0.9 0.2 1.0];
+            c.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.2 :0.9 :0.2 :1.0];
             [v.layer addAnimation:c forKey:@"xc.morph.r"];
         }
     }
@@ -1181,6 +1181,36 @@ static BOOL OnFillVisible(UIView *v, int depth) {
         if (InstallHook(cls, @selector(touchesEnded:withEvent:), (IMP)new_te_##TAG, &o)) orig_te_##TAG = (void (*)(UIView *, SEL, NSSet *, UIEvent *))o;     \
         if (InstallHook(cls, @selector(touchesCancelled:withEvent:), (IMP)new_tc_##TAG, &o)) orig_tc_##TAG = (void (*)(UIView *, SEL, NSSet *, UIEvent *))o; \
     }
+
+
+// MARK: - Stock animation finder -------------------------------------------------
+// Records which Control Center views get which animations (class, key, key path, duration) so the
+// stock expand / menu animations can be located and switched off. Only active with debug dump on.
+
+static void (*orig_addAnimation)(CALayer *, SEL, CAAnimation *, NSString *);
+static void new_addAnimation(CALayer *self, SEL _cmd, CAAnimation *anim, NSString *key) {
+    orig_addAnimation(self, _cmd, anim, key);
+    if (!gDebugDump || [key hasPrefix:@"xc."]) return;
+    id d = self.delegate;
+    if (![d isKindOfClass:UIView.class]) return;
+    UIView *v = d;
+    BOOL cc = NO;
+    for (UIView *a = v; a && !cc; a = a.superview) {
+        NSString *n = NSStringFromClass(a.class);
+        cc = [n hasPrefix:@"CCUI"] || [n hasPrefix:@"ControlCenter"] || [n containsString:@"ContextMenu"] || [n containsString:@"CCUIModule"];
+    }
+    if (!cc) return;
+    static NSMutableSet *seen; static NSMutableString *acc; static int lines;
+    if (!seen) { seen = [NSMutableSet set]; acc = [NSMutableString string]; }
+    NSString *kp = [anim isKindOfClass:CAPropertyAnimation.class] ? ((CAPropertyAnimation *)anim).keyPath : @"-";
+    NSString *sig = [NSString stringWithFormat:@"%@|%@|%@|%@", NSStringFromClass(v.class), key, kp, NSStringFromClass(anim.class)];
+    if ([seen containsObject:sig] || lines > 160) return;
+    [seen addObject:sig]; lines++;
+    NSString *parent = v.superview ? NSStringFromClass(v.superview.class) : @"-";
+    [acc appendFormat:@"%@ (in %@) key=%@ keyPath=%@ %@ dur=%.2f size=%@\n", NSStringFromClass(v.class), parent, key, kp,
+     NSStringFromClass(anim.class), anim.duration, NSStringFromCGSize(v.bounds.size)];
+    [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-anim-log.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+}
 
 DEFINE_HOOKS(ModuleFill,   CCKindModuleFill)
 DEFINE_HOOKS(Container,    CCKindContainer)
@@ -1231,6 +1261,7 @@ static void IOS26CCStyleInit(void) {
         Install_Round       ("CCUIRoundButton");
         Install_Slider      ("CCUIContinuousSliderView");
         Install_Stepped     ("CCUISteppedSliderView");
+        InstallHook("CALayer", @selector(addAnimation:forKey:), (IMP)new_addAnimation, (IMP *)&orig_addAnimation);
         InstallTouch_Template("CCUIControlTemplateView");
         InstallTouch_ButtonModule("CCUIButtonModuleView");
         InstallTouch_Round("CCUIRoundButton");
