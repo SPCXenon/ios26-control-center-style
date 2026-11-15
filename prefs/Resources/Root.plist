@@ -788,6 +788,28 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
+			<string>Spring press feedback on tiles, buttons and sliders, and a pop when a toggle turns on.</string>
+			<key>label</key>
+			<string>Motion</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>motion</string>
+			<key>label</key>
+			<string>iOS 27 motion</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
 			<string>Extra blur adds one blur view per module and costs frame rate. Leave it off unless you need it.</string>
 			<key>label</key>
 			<string>Experimental</string>

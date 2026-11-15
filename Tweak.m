@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.8
+// IOS26CCStyle 0.2.9
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -18,7 +18,7 @@ static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
 
 // MARK: - Preferences ---------------------------------------------------------
 
-static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur;
+static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion;
 static BOOL    gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus;
 static CGFloat gMaxRadius;     // corner radius cap for modules (pt)
 static CGFloat gRim, gRimWidth;// rim light intensity 0…1, stroke width pt
@@ -108,6 +108,7 @@ static void LoadPrefs(void) {
     gSliderCapsule = PrefBool(@"sliderCapsule", YES);
     gContinuous    = PrefBool(@"continuousCorners", YES);
     gExtraBlur     = PrefBool(@"extraBlur", NO);
+    gMotion        = PrefBool(@"motion", YES);
     gMaxRadius     = (CGFloat)PrefDouble(@"maxRadius", 46.0, 16.0, 70.0);
     gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.9, 0.0, 1.0);
     gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.9, 0.3, 2.5);
@@ -919,10 +920,14 @@ static void DumpViewOnce(UIView *v, CGFloat radius, const char *tag) {
             encoding:NSUTF8StringEncoding error:NULL];
 }
 
+static void MotionToggle(UIView *v, BOOL on);
+static BOOL OnFillVisible(UIView *v, int depth);
+
 static void StyleOnFillsTop(UIView *v, CGFloat radius, BOOL dark) {
     DumpViewOnce(v, radius, "module");
     int n = StyleOnFills(v, radius, dark, 1);
     SyncSynthFill(v, radius, dark, n > 0);
+    if (n > 0) MotionToggle(v, OnFillVisible(v, 0));
 }
 
 static void ApplyStyle(UIView *v, CCKind kind) {
@@ -1052,6 +1057,69 @@ static BOOL InstallHook(const char *className, SEL sel, IMP replacement, IMP *or
         }                                                                           \
     }
 
+// MARK: - Motion (iOS 27 style springs) ----------------------------------------
+// Animations are added to the layer only (never the model transform), so Control Center's own
+// transforms and expansion animations keep working and the layer always settles back by itself.
+
+static CASpringAnimation *Spring(NSString *keyPath, double from, double to, double damping, double stiffness) {
+    CASpringAnimation *a = [CASpringAnimation animationWithKeyPath:keyPath];
+    a.fromValue = @(from); a.toValue = @(to);
+    a.mass = 1.0; a.damping = damping; a.stiffness = stiffness; a.initialVelocity = 0;
+    a.duration = a.settlingDuration;
+    return a;
+}
+
+static double CurrentScale(UIView *v) {
+    CALayer *p = v.layer.presentationLayer ?: v.layer;
+    return [[p valueForKeyPath:@"transform.scale"] doubleValue] ?: 1.0;
+}
+
+static void MotionPress(UIView *v, double target, BOOL down) {
+    if (!gMotion || !gEnabled) return;
+    double now = CurrentScale(v);
+    if (down) {
+        CASpringAnimation *a = Spring(@"transform.scale", now, target, 16, 420);
+        a.fillMode = kCAFillModeForwards; a.removedOnCompletion = NO;
+        [v.layer addAnimation:a forKey:@"xc.press"];
+    } else {
+        // release: bounce past 1 and settle; the model value is 1, so the layer ends there
+        [v.layer addAnimation:Spring(@"transform.scale", now, 1.0, 9, 260) forKey:@"xc.press"];
+    }
+}
+
+static const void *kWasOnKey = &kWasOnKey;
+
+// A toggle turning on pops: a quick overshoot spring, like the iOS 27 tiles.
+static void MotionToggle(UIView *v, BOOL on) {
+    NSNumber *was = objc_getAssociatedObject(v, kWasOnKey);
+    objc_setAssociatedObject(v, kWasOnKey, @(on), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!gMotion || !gEnabled || !was || was.boolValue == on) return;
+    [v.layer addAnimation:Spring(@"transform.scale", on ? 0.9 : 1.06, 1.0, 8, 240) forKey:@"xc.pop"];
+}
+
+static BOOL OnFillVisible(UIView *v, int depth) {
+    if (depth > 3) return NO;
+    for (UIView *s in v.subviews) {
+        if (LooksLikeOnFill(s, v.bounds.size)) return s.alpha > 0.5 && !s.hidden;
+        if (s.subviews.count && OnFillVisible(s, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+#define DEFINE_TOUCH_HOOKS(TAG, TARGET)                                                       \
+    static void (*orig_tb_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
+    static void (*orig_te_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
+    static void (*orig_tc_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
+    static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, YES); } \
+    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); }  \
+    static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); }  \
+    static void InstallTouch_##TAG(const char *cls) {                                         \
+        IMP o = NULL;                                                                         \
+        if (InstallHook(cls, @selector(touchesBegan:withEvent:), (IMP)new_tb_##TAG, &o)) orig_tb_##TAG = (void (*)(UIView *, SEL, NSSet *, UIEvent *))o;     \
+        if (InstallHook(cls, @selector(touchesEnded:withEvent:), (IMP)new_te_##TAG, &o)) orig_te_##TAG = (void (*)(UIView *, SEL, NSSet *, UIEvent *))o;     \
+        if (InstallHook(cls, @selector(touchesCancelled:withEvent:), (IMP)new_tc_##TAG, &o)) orig_tc_##TAG = (void (*)(UIView *, SEL, NSSet *, UIEvent *))o; \
+    }
+
 DEFINE_HOOKS(ModuleFill,   CCKindModuleFill)
 DEFINE_HOOKS(Container,    CCKindContainer)
 DEFINE_HOOKS(Template,     CCKindModule)
@@ -1061,6 +1129,11 @@ DEFINE_HOOKS(Power,        CCKindRound)
 DEFINE_HOOKS(Round,        CCKindRound)
 DEFINE_HOOKS(Slider,       CCKindSlider)
 DEFINE_HOOKS(Stepped,      CCKindSlider)
+
+DEFINE_TOUCH_HOOKS(Template, 0.95)
+DEFINE_TOUCH_HOOKS(ButtonModule, 0.93)
+DEFINE_TOUCH_HOOKS(Round, 0.9)
+DEFINE_TOUCH_HOOKS(Slider, 1.04)
 
 // MARK: - Live reload ---------------------------------------------------------
 
@@ -1096,6 +1169,10 @@ static void IOS26CCStyleInit(void) {
         Install_Round       ("CCUIRoundButton");
         Install_Slider      ("CCUIContinuousSliderView");
         Install_Stepped     ("CCUISteppedSliderView");
+        InstallTouch_Template("CCUIControlTemplateView");
+        InstallTouch_ButtonModule("CCUIButtonModuleView");
+        InstallTouch_Round("CCUIRoundButton");
+        InstallTouch_Slider("CCUIContinuousSliderView");
         InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,

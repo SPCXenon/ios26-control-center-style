@@ -1587,9 +1587,11 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
         rawDestTex ? (__bridge id<MTLTexture>)rawDestTex : nil;
 
     auto compatibleDimension = [](uint64_t destination, uint64_t source) {
+        // CC animates module sizes, so the source and destination can briefly differ a lot;
+        // allow a quarter of the size instead of dropping the glass for those frames
         return destination >= source
             ? destination - source <= 64
-            : source - destination <= 8;
+            : source - destination <= std::max<uint64_t>(8, source / 4);
     };
     bool compatibleDimensions =
         destTex &&
