@@ -812,7 +812,7 @@
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
-			<false/>
+			<true/>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
@@ -826,7 +826,7 @@
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
-			<false/>
+			<true/>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>

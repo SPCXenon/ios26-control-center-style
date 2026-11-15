@@ -512,6 +512,8 @@ ptrdiff_t LGResolve_MetalCmdBufOffset(void) {
     return -1;
 }
 
+void LGDumpVtable(void * const *vtable, int maxSlots);
+
 int LGResolve_RenderVtableSlot(void * const *vtable, int maxSlots) {
     // quartzcore uses plain and pac forwarders to reach the render slot
     if (!vtable) return -1;
@@ -563,14 +565,65 @@ int LGResolve_RenderVtableSlot(void * const *vtable, int maxSlots) {
             }
         }
     }
+    LGDumpVtable(vtable, maxSlots);
     rlog("render-slot: render forwarder not found (checked %d slots)", maxSlots);
     return -1;
+}
+
+void LGDumpVtable(void * const *vtable, int maxSlots) {
+    g_forceLog = true;
+    for (int i = 0; i < maxSlots; i++) {
+        uint32_t *fn = (uint32_t *)LGSymStripCode(vtable[i]);
+        if (!fn) { rlog("vt[%d] null", i); continue; }
+        char buf[700]; int n = 0;
+        n += snprintf(buf + n, sizeof(buf) - n, "vt[%d] %p qci=%d:", i, (void *)fn, LGSymAddressInQuartzCoreImage((void *)fn));
+        if (LGSymAddressInQuartzCoreImage((void *)fn))
+            for (int k = 0; k < 48 && n < (int)sizeof(buf) - 10; k++) n += snprintf(buf + n, sizeof(buf) - n, " %08x", fn[k]);
+        rlog("%s", buf);
+    }
+    g_forceLog = false;
+}
+
+// Register-allocation independent test for get_edge_info(self, filter, layer, ctx, bounds, edge, flag):
+// the function writes two floats (or one 64-bit value) through its 6th argument (x5) and a byte
+// through its 7th (x6). Arguments are tracked through plain register moves, and caller-saved
+// registers are forgotten after a call, so a different register allocation still matches.
+static bool LGLooksLikeEdgeInfo(const uint32_t *fn) {
+    uint32_t edgeMask = 1u << 5, flagMask = 1u << 6;
+    bool edgeStore = false, flagStore = false;
+    for (int k = 0; k < 120; k++) {
+        uint32_t ins = fn[k];
+        if (ins == 0xD65F03C0u || ins == 0xD65F0FFFu) break;
+        // BL / BLR: caller-saved registers (x0-x18) no longer hold the arguments
+        if ((ins & 0xFC000000u) == 0x94000000u || (ins & 0xFFFFFC1Fu) == 0xD63F0000u) {
+            edgeMask &= ~0x7FFFFu; flagMask &= ~0x7FFFFu;
+            continue;
+        }
+        // mov xd, xm  (ORR xd, xzr, xm)
+        if ((ins & 0xFFE0FFE0u) == 0xAA0003E0u) {
+            uint32_t rd = ins & 0x1f, rm = (ins >> 16) & 0x1f;
+            if ((edgeMask >> rm) & 1) edgeMask |= (1u << rd); else edgeMask &= ~(1u << rd);
+            if ((flagMask >> rm) & 1) flagMask |= (1u << rd); else flagMask &= ~(1u << rd);
+            continue;
+        }
+        uint32_t rn = (ins >> 5) & 0x1f;
+        bool stpFp   = (ins & 0x3FC00000u) == 0x2D000000u && (ins >> 30) < 2;   // stp s/d, s/d, [xn, #imm]
+        bool strD    = (ins & 0xFFC00000u) == 0xFD000000u;                        // str d, [xn, #imm]
+        bool strX    = (ins & 0xFFC00000u) == 0xF9000000u;                        // str x, [xn, #imm]
+        bool strB    = (ins & 0xFFC00000u) == 0x39000000u;                        // strb w, [xn, #imm]
+        if ((stpFp || strD || strX) && ((edgeMask >> rn) & 1)) edgeStore = true;
+        if (strB && ((flagMask >> rn) & 1)) flagStore = true;
+        // a register overwritten by anything else stops being an alias (loads, adds, ...)
+        // is not tracked on purpose: bl/mov handling above covers the generated code shapes.
+    }
+    return edgeStore && flagStore;
 }
 
 int LGResolve_EdgeInfoVtableSlot(void * const *vtable, int maxSlots) {
     // identify edge info by its argument saves and two output writes
     if (!vtable) return -1;
 
+    // 1) exact instruction words known from earlier QuartzCore builds
     for (int i = 0; i < maxSlots; i++) {
         uint32_t *fn = (uint32_t *)LGSymStripCode(vtable[i]);
         if (!fn || !LGSymAddressInQuartzCoreImage((void *)fn)) continue;
@@ -588,21 +641,32 @@ int LGResolve_EdgeInfoVtableSlot(void * const *vtable, int maxSlots) {
             if (ins == 0xD65F03C0u || ins == 0xD65F0FFFu) break;
         }
         if (savesEdge && savesFlag && writesEdge && writesFlag) {
-            rlog("edge-info-slot: Gaussian get_edge_info at vtable[%d]", i);
+            rlog("edge-info-slot: Gaussian get_edge_info at vtable[%d] (exact match)", i);
             return i;
         }
     }
-    // Pattern did not match this QuartzCore build: dump every slot so it can be re-derived.
-    g_forceLog = true;
+
+    // 2) structural match, independent of register allocation (iOS 18.5 QuartzCore)
+    int found = -1, count = 0;
     for (int i = 0; i < maxSlots; i++) {
         uint32_t *fn = (uint32_t *)LGSymStripCode(vtable[i]);
-        if (!fn) { rlog("vt[%d] null", i); continue; }
-        char buf[700]; int n = 0;
-        n += snprintf(buf + n, sizeof(buf) - n, "vt[%d] %p qci=%d:", i, (void *)fn, LGSymAddressInQuartzCoreImage((void *)fn));
-        for (int k = 0; k < 48 && n < (int)sizeof(buf) - 10; k++) n += snprintf(buf + n, sizeof(buf) - n, " %08x", fn[k]);
-        rlog("%s", buf);
+        if (!fn || !LGSymAddressInQuartzCoreImage((void *)fn)) continue;
+        if (!LGLooksLikeEdgeInfo(fn)) continue;
+        count++;
+        if (found < 0) found = i;
+        g_forceLog = true;
+        rlog("edge-info-slot: structural candidate vtable[%d] = %p", i, (void *)fn);
+        g_forceLog = false;
     }
-    g_forceLog = false;
+    if (found >= 0) {
+        g_forceLog = true;
+        rlog("edge-info-slot: Gaussian get_edge_info at vtable[%d] (structural match, %d candidate(s))", found, count);
+        g_forceLog = false;
+        return found;
+    }
+
+    // Nothing matched: dump every slot so the pattern can be re-derived.
+    LGDumpVtable(vtable, maxSlots);
     rlog("edge-info-slot: get_edge_info not found (checked %d slots)", maxSlots);
     return -1;
 }

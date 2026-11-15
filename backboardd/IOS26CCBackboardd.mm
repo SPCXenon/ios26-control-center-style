@@ -243,7 +243,7 @@ static bool lgShouldEnterSafeMode(void) {
     return false;
 }
 
-bool gLGBackboardDebugLogging = false;
+bool gLGBackboardDebugLogging = true;
 
 static void lglog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void lglog(const char *fmt, ...) {
@@ -1251,7 +1251,7 @@ static void lgReloadHostPrefs(void) {
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
     NSNumber *debugLogging = prefs[@"Debug.Logging.Enabled"];
     gLGBackboardDebugLogging = [debugLogging isKindOfClass:NSNumber.class]
-        ? debugLogging.boolValue : false;
+        ? debugLogging.boolValue : true;
     NSNumber *fresnelStrength = prefs[@"Renderer.FresnelGlareStrength"];
     g_fresnelGlareStrength = [fresnelStrength isKindOfClass:NSNumber.class]
         ? fminf(1.0f, fmaxf(0.0f, fresnelStrength.floatValue)) : 0.8f;
@@ -2138,7 +2138,7 @@ static void tweakInit(void) {
     NSDictionary *bootPrefs = [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
     NSNumber *debugLogging = bootPrefs[@"Debug.Logging.Enabled"];
     gLGBackboardDebugLogging = [debugLogging isKindOfClass:NSNumber.class]
-        ? debugLogging.boolValue : false;
+        ? debugLogging.boolValue : true;
     NSNumber *rendererEnabled = bootPrefs[@"Renderer.Enabled"];
     if ([rendererEnabled isKindOfClass:NSNumber.class] && !rendererEnabled.boolValue) {
         FILE *lf = fopen(LG_LOG_PATH, "w");
