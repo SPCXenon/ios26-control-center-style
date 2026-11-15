@@ -45,8 +45,24 @@
 static CFStringRef const kLGSafeModeNotification =
     CFSTR("xenon.liquidass/BackboarddSafeMode");
 
+// Fault-tolerant pointer read: render-time structures can be torn down while Control Center pages
+// are switching, and backboardd must never fault on a stale pointer.
+#include <mach/mach.h>
+static inline void *LGPeek(const void *addr) {
+    void *value = nullptr;
+    vm_size_t got = 0;
+    if ((uintptr_t)addr < 0x10000u) return nullptr;
+    if (vm_read_overwrite(mach_task_self(), (vm_address_t)addr, sizeof(void *),
+                          (vm_address_t)&value, &got) != KERN_SUCCESS || got != sizeof(void *))
+        return nullptr;
+    return value;
+}
+
 static void lgClearAccessibilityFiles(void) {
     const char *directoryPath = "/var/mobile/Library/Accessibility";
+    // keep the last session's log: after a backboardd crash the fresh log would otherwise hide it
+    rename("/var/mobile/Library/Accessibility/xenonglass.log",
+           "/var/mobile/Library/Accessibility/xenonglass-previous.log");
     DIR *directory = opendir(directoryPath);
     if (!directory) return;
 
@@ -55,7 +71,7 @@ static void lgClearAccessibilityFiles(void) {
         if (strncmp(entry->d_name, "xenonglass", 10) != 0) continue;
         // keep the crash-loop guard and safe-mode notice across restarts
         if (strstr(entry->d_name, "guard") || strstr(entry->d_name, "safemode") ||
-            strstr(entry->d_name, "alert")) continue;
+            strstr(entry->d_name, "alert") || strstr(entry->d_name, "previous")) continue;
         char path[PATH_MAX] = {};
         snprintf(path, sizeof(path), "%s/%s", directoryPath, entry->d_name);
         unlink(path);
@@ -1351,9 +1367,9 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
         return;
     }
 
-    void *rawCmdBuf  = *(void **)(metalCtx + g_cmdBufOffset);
+    void *rawCmdBuf  = LGPeek(metalCtx + g_cmdBufOffset);
     void *rawOrigTex = g_sourceTextureOffset >= 0
-        ? *(void **)(surf + g_sourceTextureOffset) : nullptr;
+        ? LGPeek(surf + g_sourceTextureOffset) : nullptr;
 
     if (!rawCmdBuf || !rawOrigTex) {
         lglog("ourCustomRender13: early exit, cmdBuf=%p origTex=%p", rawCmdBuf, rawOrigTex);
@@ -1551,14 +1567,14 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
     uint64_t t_afterGauss = mach_absolute_time();
     R13TRACE("R13[%llu] after g_origGaussR13", callN);
 
-    rawCmdBuf = *(void **)(metalCtx + g_cmdBufOffset);
+    rawCmdBuf = LGPeek(metalCtx + g_cmdBufOffset);
     cmdBuf = rawCmdBuf ? (__bridge id<MTLCommandBuffer>)rawCmdBuf : nil;
     uint8_t *destSurf = g_contextDestSurfaceOffset >= 0
-        ? *(uint8_t **)(metalCtx + g_contextDestSurfaceOffset) : nullptr;
+        ? (uint8_t *)LGPeek(metalCtx + g_contextDestSurfaceOffset) : nullptr;
 
     bool plausibleDestSurf = (uintptr_t)destSurf >= 0x10000u;
     void *rawDestTex = (plausibleDestSurf && g_destinationTextureOffset >= 0)
-        ? *(void **)(destSurf + g_destinationTextureOffset) : nullptr;
+        ? LGPeek(destSurf + g_destinationTextureOffset) : nullptr;
     __unsafe_unretained id<MTLTexture> destTex =
         rawDestTex ? (__bridge id<MTLTexture>)rawDestTex : nil;
 
@@ -1605,7 +1621,7 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
     uint64_t t_afterStop = mach_absolute_time();
     R13TRACE("R13[%llu] after stopEncoders, before encoder", callN);
 
-    rawCmdBuf = *(void **)(metalCtx + g_cmdBufOffset);
+    rawCmdBuf = LGPeek(metalCtx + g_cmdBufOffset);
     cmdBuf = rawCmdBuf ? (__bridge id<MTLCommandBuffer>)rawCmdBuf : nil;
     if (!cmdBuf) {
         lglog("ourCustomRender13: command buffer unavailable after stopEncoders");
