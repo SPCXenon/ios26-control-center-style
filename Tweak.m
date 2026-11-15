@@ -110,8 +110,8 @@ static void LoadPrefs(void) {
     gContinuous    = PrefBool(@"continuousCorners", YES);
     gExtraBlur     = PrefBool(@"extraBlur", NO);
     gMotion        = PrefBool(@"motion", YES);
-    gSpringK       = MAX(50.0, PrefFloat(@"motionStiffness", 380.0));
-    gSpringD       = MAX(2.0, PrefFloat(@"motionDamping", 26.0));
+    gSpringK       = PrefDouble(@"motionStiffness", 380.0, 50.0, 1000.0);
+    gSpringD       = PrefDouble(@"motionDamping", 26.0, 2.0, 80.0);
     gMaxRadius     = (CGFloat)PrefDouble(@"maxRadius", 46.0, 16.0, 70.0);
     gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.9, 0.0, 1.0);
     gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.9, 0.3, 2.5);
