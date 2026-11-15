@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.2
+// IOS26CCStyle 0.2.3
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -805,7 +805,7 @@ static void SyncGlass(UIView *v, CCKind kind, CGFloat radius, BOOL dark, BOOL en
 // Enabled (selected) toggles: iOS 18 shows them as a nearly opaque white fill drawn by a
 // child of the button module, which hides the glass behind it. Round it like the shell and
 // let the backdrop show through (iOS 26 "on" tiles are frosted, not solid).
-static const void *kOnFillKey = &kOnFillKey;   // on the fill view: its stock alpha
+static const void *kOnFillKey = &kOnFillKey;   // on the fill view: its stock backgroundColor
 
 static BOOL LooksLikeOnFill(UIView *s, CGSize parent) {
     NSString *n = NSStringFromClass(s.class);
@@ -827,14 +827,21 @@ static void StyleOnFills(UIView *v, CGFloat radius, BOOL dark, NSMutableString *
              NSStringFromCGRect(s.frame), s.alpha, s.hidden, s.backgroundColor, s.layer.compositingFilter];
         }
         if (LooksLikeOnFill(s, v.bounds.size)) {
-            NSNumber *orig = objc_getAssociatedObject(s, kOnFillKey);
-            if (!orig) { orig = @(s.alpha); objc_setAssociatedObject(s, kOnFillKey, orig, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+            // Never touch the view's alpha: CCUI animates it 0 <-> 1 as the toggle turns on/off,
+            // so any cached or scaled alpha leaves enabled tiles empty or grey. Only soften the
+            // fill colour instead; the system keeps full control of visibility.
+            if (!objc_getAssociatedObject(s, kOnFillKey)) {
+                objc_setAssociatedObject(s, kOnFillKey, s.backgroundColor ?: (id)[NSNull null], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
             s.layer.cornerCurve = gContinuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
             s.layer.cornerRadius = radius;
             s.layer.masksToBounds = YES;
-            CGFloat want = orig.doubleValue * (dark ? 0.55 : 0.72) * (0.55 + 0.45 * (1.0 - gGlass));
-            if (fabs(s.alpha - want) > 0.01 && !gEnabled) want = orig.doubleValue;
-            if (fabs(s.alpha - want) > 0.01) s.alpha = want;
+            // iOS 26+ "on" tiles are bright, slightly translucent white glass.
+            CGFloat fa = (dark ? 0.94 : 0.97) - 0.10 * gGlass;
+            CGFloat w = 0, ca = 0;
+            if (!(s.backgroundColor && [s.backgroundColor getWhite:&w alpha:&ca] && fabs(ca - fa) < 0.005 && w > 0.99)) {
+                s.backgroundColor = [UIColor colorWithWhite:1.0 alpha:fa];
+            }
             continue;
         }
         if (s.subviews.count && s.bounds.size.width * s.bounds.size.height > 400) StyleOnFills(s, radius, dark, dump, depth + 1);
