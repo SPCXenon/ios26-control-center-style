@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.17
+// IOS26CCStyle 0.2.18
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -998,6 +998,46 @@ static void DumpExpanded(UIView *v) {
             encoding:NSUTF8StringEncoding error:NULL];
 }
 
+// Debug: where a Wi-Fi / Bluetooth tile sits in the page and in what order its siblings are drawn,
+// written every time such a tile lands in a window. Shows whether glass, fill or material ends up
+// in the wrong place after the page is reopened.
+static void ChainLine(NSMutableString *out, UIView *v, int indent, UIView *mark) {
+    CALayer *l = v.layer;
+    [out appendFormat:@"%*s%@%@ %@ a=%.2f hid=%d z=%.0f op=%.2f filters=%lu clip=%d%@%@\n", indent * 2, "", v == mark ? @"* " : @"",
+     NSStringFromClass(v.class), NSStringFromCGRect(v.frame), v.alpha, v.hidden, l.zPosition, l.opacity,
+     (unsigned long)l.filters.count, l.masksToBounds, objc_getAssociatedObject(v, kGlassKey) ? @" [has-glass]" : @"",
+     [v isKindOfClass:XCGlassView.class] ? @" [GLASS]" : @""];
+}
+
+static void DumpTileChain(UIView *tile) {
+    if (!gDebugDump) return;
+    UILabel *lab = FirstLabel(tile, 0);
+    if (!lab || ![lab.text isEqualToString:@"Wi-Fi"]) return;
+    static NSMutableString *acc; static int n; static CFTimeInterval last;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - last < 1.5) return;   // one snapshot per page open, not one per animation frame
+    last = now;
+    if (!acc) acc = [NSMutableString string];
+    if (n >= 8) { n = 0; [acc setString:@""]; }
+    n++;
+    [acc appendFormat:@"--- snapshot %d %.1f\n", n, CACurrentMediaTime()];
+    UIView *top = tile;
+    for (int i = 0; i < 4 && top.superview; i++) top = top.superview;
+    // ancestors with their children, one level down
+    UIView *a = tile; NSMutableArray *chain = [NSMutableArray array];
+    for (int i = 0; i < 5 && a; i++) { [chain addObject:a]; a = a.superview; }
+    for (NSInteger i = chain.count - 1; i >= 0; i--) {
+        UIView *c = chain[i];
+        ChainLine(acc, c, (int)(chain.count - 1 - i), tile);
+        if (i == 0) { for (UIView *s in c.subviews) ChainLine(acc, s, (int)chain.count, tile); }
+        else { for (UIView *s in c.subviews) if (s != chain[i - 1]) ChainLine(acc, s, (int)(chain.count - i), tile); }
+    }
+    [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-tile-chain.txt" atomically:YES
+            encoding:NSUTF8StringEncoding error:NULL];
+}
+
+static void ApplyStyle(UIView *v, CCKind kind);
+
 // The expanded volume / mute panel is a 321x360 container holding a 135 pt wide pill (plus a hidden
 // twin). The container itself has no visible shape in stock iOS, so it gets no rim, glass or corner.
 static void DumpExpanded(UIView *v);
@@ -1073,7 +1113,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
         ApplyExtraBlur(v, b);
     }
 
-    if (kind == CCKindModule) StyleOnFillsTop(v, r, darkUI);
+    if (kind == CCKindModule) { StyleOnFillsTop(v, r, darkUI); DumpTileChain(v); }
     else if (kind == CCKindRound) DumpViewOnce(v, r, "round");
 
     ApplyDecor(v, b, r);
