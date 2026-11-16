@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.18
+// IOS26CCStyle 0.2.19
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -584,6 +584,23 @@ static void hook_setAlpha(UIView *self, SEL _cmd, CGFloat a) {
     if (b) b.alpha = a;
 }
 
+
+// The glass replaces its MTMaterialView at the material's frame, but the frame was only copied at
+// layout time. When a module expands the stock code animates the material's bounds/centre; the
+// second time a panel opens there is no new layout pass of ours, so the glass stayed tile sized
+// (ghost corner square, bare panel). Follow the material whenever its geometry is set; because this
+// runs inside the system's animation block the glass gets the same spring.
+static void (*orig_setBounds)(UIView *, SEL, CGRect);
+static void (*orig_setCenter)(UIView *, SEL, CGPoint);
+static void FollowMaterial(UIView *m) {
+    UIView *g = objc_getAssociatedObject(m, kGlassKey);
+    if (!g) return;
+    CGRect f = m.frame;
+    if (!CGRectEqualToRect(g.frame, f)) g.frame = f;
+}
+static void hook_setBounds(UIView *self, SEL _cmd, CGRect r) { orig_setBounds(self, _cmd, r); FollowMaterial(self); }
+static void hook_setCenter(UIView *self, SEL _cmd, CGPoint p) { orig_setCenter(self, _cmd, p); FollowMaterial(self); }
+
 static BOOL IsBgCandidate(UIView *s, UIWindow *w) {
     CGSize ws = w.bounds.size;
     if (s.bounds.size.width < ws.width * 0.9 || s.bounds.size.height < ws.height * 0.9) return NO;
@@ -782,12 +799,6 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
         if ([s isKindOfClass:XCGlassView.class]) continue;
         if (IsExactMaterial(s)) {
             if (!want || s.bounds.size.width < 30.0 || s.bounds.size.height < 30.0) { RemoveGlass(s); continue; }
-            // The compact tile's own material stays behind at tile size in the corner of an
-            // expanded panel: no glass for it (the panel's material is the big one).
-            if (depth == 0 && s.frame.origin.x < 1.0 && s.frame.origin.y < 1.0 &&
-                s.bounds.size.width < root.bounds.size.width * 0.6 && s.bounds.size.height < root.bounds.size.height * 0.6) {
-                RemoveGlass(s); continue;
-            }
             XCGlassView *g = objc_getAssociatedObject(s, kGlassKey);
             if (!g) {
                 g = [[XCGlassView alloc] initWithFrame:s.frame];
@@ -1402,6 +1413,8 @@ static void IOS26CCStyleInit(void) {
         InstallTouch_Round("CCUIRoundButton");
         InstallTouch_Slider("CCUIContinuousSliderView");
         InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
+        InstallHook("MTMaterialView", @selector(setBounds:), (IMP)hook_setBounds, (IMP *)&orig_setBounds);
+        InstallHook("MTMaterialView", @selector(setCenter:), (IMP)hook_setCenter, (IMP *)&orig_setCenter);
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,
