@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.15
+// IOS26CCStyle 0.2.16
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -582,14 +582,6 @@ static void hook_setAlpha(UIView *self, SEL _cmd, CGFloat a) {
     orig_setAlpha(self, _cmd, a);
     XCBlurView *b = objc_getAssociatedObject(self, kBlurViewKey);
     if (b) b.alpha = a;
-    if (!gOwnAlpha) {
-        // The system fades a material out when its content goes away (module expanding, menu
-        // closing). The glass that replaces the material must fade with it, inside the same
-        // animation block, or it stays behind as a ghost at the old size.
-        objc_setAssociatedObject(self, kStockAlphaKey, @(a), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        UIView *g = objc_getAssociatedObject(self, kGlassKey);
-        if (g) g.alpha = a;
-    }
 }
 
 static BOOL IsBgCandidate(UIView *s, UIWindow *w) {
@@ -790,6 +782,12 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
         if ([s isKindOfClass:XCGlassView.class]) continue;
         if (IsExactMaterial(s)) {
             if (!want || s.bounds.size.width < 30.0 || s.bounds.size.height < 30.0) { RemoveGlass(s); continue; }
+            // The compact tile's own material stays behind at tile size in the corner of an
+            // expanded panel: no glass for it (the panel's material is the big one).
+            if (depth == 0 && s.frame.origin.x < 1.0 && s.frame.origin.y < 1.0 &&
+                s.bounds.size.width < root.bounds.size.width * 0.6 && s.bounds.size.height < root.bounds.size.height * 0.6) {
+                RemoveGlass(s); continue;
+            }
             XCGlassView *g = objc_getAssociatedObject(s, kGlassKey);
             if (!g) {
                 g = [[XCGlassView alloc] initWithFrame:s.frame];
@@ -803,9 +801,11 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
                         NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                 }
             }
-            NSNumber *stockA = objc_getAssociatedObject(s, kStockAlphaKey);
-            if (stockA && fabs(g.alpha - stockA.doubleValue) > 0.001) g.alpha = stockA.doubleValue;
-            if (g.superview != root) [root insertSubview:g aboveSubview:s];
+            // keep the glass directly above its material: CCUI re-inserts views while modules
+            // expand and collapse, and a glass left above the on-fill hides the toggle's fill
+            NSArray *sib = root.subviews;
+            NSUInteger si = [sib indexOfObject:s], gi = [sib indexOfObject:g];
+            if (g.superview != root || gi == NSNotFound || gi != si + 1) [root insertSubview:g aboveSubview:s];
             if (!CGRectEqualToRect(g.frame, s.frame)) g.frame = s.frame;
             g.layer.cornerCurve = kCACornerCurveContinuous;
             g.layer.cornerRadius = radius;
@@ -1181,12 +1181,26 @@ static BOOL OnFillVisible(UIView *v, int depth) {
     return NO;
 }
 
+// A toggle flips its label colour and fill after the touch, with no layout pass of ours in between.
+static void TouchRefresh(UIView *v) {
+    NSString *n = NSStringFromClass(v.class);
+    if (![n isEqualToString:@"CCUIControlTemplateView"] && ![n isEqualToString:@"CCUIButtonModuleView"]) return;
+    __weak UIView *weak = v;
+    const double delays[] = { 0.15, 0.4, 0.9 };
+    for (int i = 0; i < 3; i++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[i] * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *strong = weak;
+            if (strong) ApplyStyle(strong, CCKindModule);
+        });
+    }
+}
+
 #define DEFINE_TOUCH_HOOKS(TAG, TARGET)                                                       \
     static void (*orig_tb_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_te_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_tc_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, YES); } \
-    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); }  \
+    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchRefresh(self); }  \
     static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); }  \
     static void InstallTouch_##TAG(const char *cls) {                                         \
         IMP o = NULL;                                                                         \
