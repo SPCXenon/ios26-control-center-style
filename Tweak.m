@@ -1022,8 +1022,9 @@ static void DumpExpanded(UIView *v) {
     last = now;
     NSMutableString *out = [NSMutableString stringWithFormat:@"%@ %@\n", NSStringFromClass(v.class), NSStringFromCGRect(v.bounds)];
     DumpExpandedTree(v, 1, out);
-    [out writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-expanded-dump.txt" atomically:YES
-            encoding:NSUTF8StringEncoding error:NULL];
+    NSString *path = [out containsString:@"NowPlaying"] ? @"/var/mobile/Library/Preferences/ios26ccstyle-expanded-np.txt"
+                                                         : @"/var/mobile/Library/Preferences/ios26ccstyle-expanded-dump.txt";
+    [out writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
 }
 
 // Debug: where a Wi-Fi / Bluetooth tile sits in the page and in what order its siblings are drawn,
@@ -1337,6 +1338,22 @@ static void FollowSizeAnimation(CALayer *layer, CAAnimation *anim) {
     const void *k[6] = { kEdgesKey, kHotTLKey, kHotBRKey, kStreakKey, kSheenKey, kShadeKey };
     (void)keys;
     CGSize f = [fromV CGSizeValue], t = [toV CGSizeValue];
+    // The glass that replaces an MTMaterialView must grow with it. The system animates the material's
+    // layer directly (no setter we could hook), so give the glass the same springs; its model frame
+    // jumps to the final frame first, as the material's did.
+    UIView *glass = objc_getAssociatedObject(dv, kGlassKey);
+    if (glass && ![glass isKindOfClass:NSNull.class]) {
+        CGRect fin = dv.frame;
+        if (!CGRectEqualToRect(glass.frame, fin)) glass.frame = fin;
+        CASpringAnimation *gs = [sa copy];
+        [glass.layer addAnimation:gs forKey:@"xc.glass.size"];
+        CASpringAnimation *gp = [sa copy];
+        gp.keyPath = @"position";
+        CGPoint c = dv.center;
+        gp.fromValue = [NSValue valueWithCGPoint:CGPointMake(c.x - (t.width - f.width) / 2, c.y - (t.height - f.height) / 2)];
+        gp.toValue = [NSValue valueWithCGPoint:c];
+        [glass.layer addAnimation:gp forKey:@"xc.glass.pos"];
+    }
     for (int i = 0; i < 6; i++) {
         CALayer *l = objc_getAssociatedObject(dv, k[i]);
         if (![l isKindOfClass:CALayer.class] || l.hidden) continue;
