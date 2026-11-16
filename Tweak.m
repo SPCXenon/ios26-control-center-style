@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.16
+// IOS26CCStyle 0.2.17
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -913,20 +913,30 @@ static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
 // Some tiles (Orientation Lock) turn their label dark when enabled but get no system fill view,
 // which leaves dark text on a dark tile. Give those tiles a fill of our own, matching the look of
 // the other enabled tiles, and remove it again when the label turns light.
-static void SyncSynthFill(UIView *v, CGFloat radius, BOOL dark, BOOL systemFillPresent) {
+static void SyncSynthFill(UIView *v, CGFloat radius, BOOL dark, BOOL systemFillVisible) {
     UIView *fill = objc_getAssociatedObject(v, kSynthFillKey);
-    UILabel *label = systemFillPresent ? nil : FirstLabel(v, 0);
+    UILabel *label = systemFillVisible ? nil : FirstLabel(v, 0);
     CGFloat w = 1.0, a = 0;
     BOOL enabledLook = label && [label.textColor getWhite:&w alpha:&a] && w < 0.4 && a > 0.3;
-    if (!enabledLook) { if (fill) fill.hidden = YES; return; }
+    if (!enabledLook) { if (fill && !fill.hidden) fill.hidden = YES; return; }
     if (!fill) {
         fill = [[XCOnFillView alloc] init];
         fill.userInteractionEnabled = NO;
-        [v insertSubview:fill atIndex:0];
         objc_setAssociatedObject(v, kSynthFillKey, fill, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    fill.hidden = NO;
-    fill.frame = v.bounds;
+    // Must sit above the module's material and its glass, or the glass covers it.
+    UIView *anchorView = nil;
+    for (UIView *s in v.subviews) {
+        if (s != fill && ([s isKindOfClass:XCGlassView.class] || [NSStringFromClass(s.class) containsString:@"MaterialView"])) anchorView = s;
+    }
+    NSArray *sib = v.subviews;
+    if (anchorView) {
+        if (fill.superview != v || [sib indexOfObject:fill] != [sib indexOfObject:anchorView] + 1) [v insertSubview:fill aboveSubview:anchorView];
+    } else if (fill.superview != v) {
+        [v insertSubview:fill atIndex:0];
+    }
+    if (fill.hidden) fill.hidden = NO;
+    if (!CGRectEqualToRect(fill.frame, v.bounds)) fill.frame = v.bounds;
     fill.layer.cornerCurve = gContinuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
     fill.layer.cornerRadius = radius;
     fill.layer.masksToBounds = YES;
@@ -958,7 +968,7 @@ static BOOL OnFillVisible(UIView *v, int depth);
 static void StyleOnFillsTop(UIView *v, CGFloat radius, BOOL dark) {
     DumpViewOnce(v, radius, "module");
     int n = StyleOnFills(v, radius, dark, 1);
-    SyncSynthFill(v, radius, dark, n > 0);
+    SyncSynthFill(v, radius, dark, n > 0 && OnFillVisible(v, 0));
     if (n > 0) MotionToggle(v, OnFillVisible(v, 0));
 }
 
@@ -1081,7 +1091,7 @@ static void ScheduleReapply(UIView *v, CCKind kind) {
     __weak UIView *weak = v;
     const double delays[] = { 0.12, 0.45 };   // second pass catches menu content added after expansion
     for (int i = 0; i < 2; i++) {
-        if (i == 1 && kind != CCKindContainer) break;
+        if (i == 1 && kind != CCKindContainer && kind != CCKindModule) break;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[i] * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             UIView *strong = weak;
