@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.20
+// IOS26CCStyle 0.2.21
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -26,6 +26,7 @@ static CGFloat gRim, gRimWidth;// rim light intensity 0…1, stroke width pt
 static CGFloat gSheen, gTint;  // top sheen alpha, extra fill tint alpha
 // iOS 27-style master slider: 0 = ultra clear … 1 = fully tinted (default 0.5)
 static CGFloat gGlass;         // raw slider value
+static CGFloat gGlassBlur;     // blur radius of the refraction glass (backdrop captured before refraction)
 static CGFloat gMatAlpha;      // alpha of the system material views (blur) behind modules
 static CGFloat gEffTint;       // resulting fill tint alpha
 static CGFloat gRimMul;        // rim brightness multiplier (clearer glass = brighter edges)
@@ -120,6 +121,7 @@ static void LoadPrefs(void) {
     gInner         = (CGFloat)PrefDouble(@"innerRim", 0.1, 0.0, 1.0);
     gHot           = (CGFloat)PrefDouble(@"glow", 0.15, 0.0, 0.3);
     gGlass         = (CGFloat)PrefDouble(@"glassTint", 0.5, 0.0, 1.0);
+    gGlassBlur     = (CGFloat)PrefDouble(@"glassBlur", 12.0, 0.0, 40.0);
     gMatAlpha      = 0.35 + 0.65 * gGlass;
     gEffTint       = MIN(0.5, 0.03 + 0.17 * gGlass + gTint);
     gRimMul        = 1.3 - 0.5 * gGlass;
@@ -683,6 +685,7 @@ static BOOL gGlassObserverSet;
 @property (nonatomic) BOOL glassDark;
 - (void)attachFilter;
 - (void)reloadFilter;
+- (void)applyBlur;
 @end
 
 @implementation XCGlassView {
@@ -748,12 +751,21 @@ static BOOL gGlassObserverSet;
         id filter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(
             filterCls, NSSelectorFromString(@"filterWithType:"), type);
         if (!filter) return;
-        if (access("/var/mobile/Library/Accessibility/xenonglass-gaussian-identity-state.bin", F_OK) == 0) {
-            @try { [filter setValue:@1.0 forKey:@"inputRadius"]; } @catch (__unused NSException *e) {}
-        }
+        // The renderer refracts the blurred backdrop; without a radius the glass shows the page
+        // almost sharp (clear tiles with colourful bleed-through). Radius 1 is the minimum that
+        // is not treated as "no blur".
+        @try { [filter setValue:@(MAX(1.0, gGlassBlur)) forKey:@"inputRadius"]; } @catch (__unused NSException *e) {}
         layer.filters = @[filter];
         _attachedType = [type copy];
     } @catch (__unused NSException *e) {}
+}
+
+- (void)applyBlur {
+    CALayer *layer = self.layer;
+    id f = layer.filters.firstObject;
+    if (!f) return;
+    @try { [f setValue:@(MAX(1.0, gGlassBlur)) forKey:@"inputRadius"]; } @catch (__unused NSException *e) { return; }
+    layer.filters = @[f];
 }
 
 // Render parameters changed in backboardd: flip to the ".refresh" twin atom so the
@@ -1386,6 +1398,7 @@ static void PrefsChanged(CFNotificationCenterRef center, void *observer, CFStrin
                          const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
         LoadPrefs();
+        for (XCGlassView *g in gGlassViews.allObjects) [g applyBlur];
         for (UIView *v in gTracked.allObjects) {
             if (objc_getAssociatedObject(v, kMenuKey) && !objc_getAssociatedObject(v, kStyledKey)) {
                 ApplyMenuDecor(v);
