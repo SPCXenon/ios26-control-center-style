@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.19
+// IOS26CCStyle 0.2.20
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -913,6 +913,11 @@ static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
             if (!(s.backgroundColor && [s.backgroundColor getWhite:&w alpha:&ca] && fabs(ca - fa) < 0.005 && w > 0.99)) {
                 s.backgroundColor = [UIColor colorWithWhite:1.0 alpha:fa];
             }
+            // The stock fill carries a layer filter that depends on the stock material behind it; with
+            // that material replaced by glass the fill is sometimes not drawn at all (clear tiles with
+            // dark text). A plain translucent white fill needs no filter, so drop it.
+            if (s.layer.filters.count) s.layer.filters = nil;
+            if (s.layer.compositingFilter) s.layer.compositingFilter = nil;
             n++;
             continue;
         }
@@ -1014,9 +1019,11 @@ static void DumpExpanded(UIView *v) {
 // in the wrong place after the page is reopened.
 static void ChainLine(NSMutableString *out, UIView *v, int indent, UIView *mark) {
     CALayer *l = v.layer;
-    [out appendFormat:@"%*s%@%@ %@ a=%.2f hid=%d z=%.0f op=%.2f filters=%lu clip=%d%@%@\n", indent * 2, "", v == mark ? @"* " : @"",
+    NSString *fl = l.filters.count ? [NSString stringWithFormat:@"%@", l.filters] : @"0";
+    fl = [fl stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    [out appendFormat:@"%*s%@%@ %@ a=%.2f hid=%d z=%.0f op=%.2f filters=%@ clip=%d%@%@\n", indent * 2, "", v == mark ? @"* " : @"",
      NSStringFromClass(v.class), NSStringFromCGRect(v.frame), v.alpha, v.hidden, l.zPosition, l.opacity,
-     (unsigned long)l.filters.count, l.masksToBounds, objc_getAssociatedObject(v, kGlassKey) ? @" [has-glass]" : @"",
+     fl, l.masksToBounds, objc_getAssociatedObject(v, kGlassKey) ? @" [has-glass]" : @"",
      [v isKindOfClass:XCGlassView.class] ? @" [GLASS]" : @""];
 }
 
