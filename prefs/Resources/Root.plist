@@ -572,13 +572,13 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>12</real>
+			<real>0</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
 			<string>glassBlur</string>
 			<key>label</key>
-			<string>Glass blur</string>
+			<string>Glass blur (experimental, misaligns rims)</string>
 			<key>max</key>
 			<real>40</real>
 			<key>min</key>

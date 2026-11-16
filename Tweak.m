@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.21
+// IOS26CCStyle 0.2.22
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -121,7 +121,7 @@ static void LoadPrefs(void) {
     gInner         = (CGFloat)PrefDouble(@"innerRim", 0.1, 0.0, 1.0);
     gHot           = (CGFloat)PrefDouble(@"glow", 0.15, 0.0, 0.3);
     gGlass         = (CGFloat)PrefDouble(@"glassTint", 0.5, 0.0, 1.0);
-    gGlassBlur     = (CGFloat)PrefDouble(@"glassBlur", 12.0, 0.0, 40.0);
+    gGlassBlur     = (CGFloat)PrefDouble(@"glassBlur", 0.0, 0.0, 40.0);
     gMatAlpha      = 0.35 + 0.65 * gGlass;
     gEffTint       = MIN(0.5, 0.03 + 0.17 * gGlass + gTint);
     gRimMul        = 1.3 - 0.5 * gGlass;
