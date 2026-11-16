@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.14
+// IOS26CCStyle 0.2.15
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -988,9 +988,25 @@ static void DumpExpanded(UIView *v) {
             encoding:NSUTF8StringEncoding error:NULL];
 }
 
+// The expanded volume / mute panel is a 321x360 container holding a 135 pt wide pill (plus a hidden
+// twin). The container itself has no visible shape in stock iOS, so it gets no rim, glass or corner.
+static void DumpExpanded(UIView *v);
+static BOOL ContainerHoldsVolume(UIView *v) {
+    for (UIView *s in v.subviews) if (IsVolumeHost(s)) return YES;
+    return NO;
+}
+
 static void ApplyStyle(UIView *v, CCKind kind) {
     if (!v.window) return;
     ApplyBackground(v);
+    if (kind == CCKindContainer && ContainerHoldsVolume(v)) {
+        HideDecor(v);
+        SyncGlass(v, kind, 0.0, IsDarkUI(v), NO);
+        SetMaterialAlpha(v, 0, 1.0);
+        DecorateMenus(v);   // keeps the volume host bare, still styles the stepper buttons
+        DumpExpanded(v);
+        return;
+    }
     if (!gEnabled || !KindEnabled(kind)) {
         HideDecor(v);
         SyncGlass(v, kind, 0.0, IsDarkUI(v), NO);
