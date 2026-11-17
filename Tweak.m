@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.3.1
+// IOS26CCStyle 0.3.2
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -752,17 +752,23 @@ static BOOL gGlassObserverSet;
         NSMutableString *type = [NSMutableString stringWithFormat:@"xenon.liquidglass.cc.r%ld", (long)step];
         if (self.glassDark) [type appendString:@".dark"];
         if (_variant) [type appendString:@".refresh"];
-        if ([_attachedType isEqualToString:type] && layer.filters.count == 1) return;
+        if ([_attachedType isEqualToString:type] && layer.filters.count == (gGlassBlur >= 0.5 ? 2u : 1u)) return;
 
         Class filterCls = NSClassFromString(@"CAFilter");
         if (!filterCls) return;
         id filter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(
             filterCls, NSSelectorFromString(@"filterWithType:"), type);
         if (!filter) return;
-        // Left unset the renderer uses its own stock blur. Forcing a radius (even 1) replaced that
-        // blur and padded the source texture, which clears the glass and offsets the rim.
-        if (gGlassBlur >= 0.5) { @try { [filter setValue:@(gGlassBlur) forKey:@"inputRadius"]; [filter setValue:@YES forKey:@"inputNormalizeEdges"]; } @catch (__unused NSException *e) {} }
-        layer.filters = @[filter];
+        // The glass filter keeps no radius of its own (a radius pads the captured source and shifts the
+        // rim). The blur is a separate stock gaussian ahead of it in the chain.
+        NSMutableArray *chain = [NSMutableArray array];
+        if (gGlassBlur >= 0.5) {
+            id blur = ((id (*)(Class, SEL, NSString *))objc_msgSend)(filterCls, NSSelectorFromString(@"filterWithType:"), @"gaussianBlur");
+            @try { [blur setValue:@(gGlassBlur) forKey:@"inputRadius"]; [blur setValue:@YES forKey:@"inputNormalizeEdges"]; } @catch (__unused NSException *e) {}
+            if (blur) [chain addObject:blur];
+        }
+        [chain addObject:filter];
+        layer.filters = chain;
         _attachedType = [type copy];
     } @catch (__unused NSException *e) {}
 }

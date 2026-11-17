@@ -1705,24 +1705,17 @@ static bool lgIsCustomAtom(uint32_t atom) {
 static uint64_t ourCustomEdgeInfo(void *self, void *filter, void *layer,
                                   void *ctx, void *bounds,
                                   simd_float2 *edge, bool *flag) {
-    uint64_t r = g_origGaussEdgeInfo
+    return g_origGaussEdgeInfo
         ? g_origGaussEdgeInfo(self, filter, layer, ctx, bounds, edge, flag)
         : 0;
-    if (edge) *edge = simd_make_float2(0.0f, 0.0f);   // glass: never pad the captured source
-    return r;
 }
 
 static uint64_t ourGaussianEdgeInfoHook(void *self, void *filter, void *layer,
                                         void *ctx, void *bounds,
                                         simd_float2 *edge, bool *flag) {
-    uint64_t r = g_origGaussEdgeInfo
+    return g_origGaussEdgeInfo
         ? g_origGaussEdgeInfo(self, filter, layer, ctx, bounds, edge, flag)
         : 0;
-    // A blur radius makes CA capture a source padded by the radius; the shader assumes the source
-    // matches the view, so the rim and refraction shift (double edge). Glass layers get no padding.
-    uint32_t atom = filter ? *(uint32_t *)((uint8_t *)filter + g_filterAtomOffset) : 0;
-    if (edge && lgIsCustomAtom(atom)) *edge = simd_make_float2(0.0f, 0.0f);
-    return r;
 }
 
 static void ourGaussianRenderHook(void *self, void *filter, void *layer, void *ctx,
