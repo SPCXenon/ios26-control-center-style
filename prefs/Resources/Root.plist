@@ -570,26 +570,6 @@
 			<key>PostNotification</key>
 			<string>com.xenon.ios26ccstyle/reload</string>
 			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0</real>
-			<key>defaults</key>
-			<string>com.xenon.ios26ccstyle</string>
-			<key>key</key>
-			<string>glassBlurRadius</string>
-			<key>label</key>
-			<string>Glass blur radius (0 = stock)</string>
-			<key>max</key>
-			<real>40</real>
-			<key>min</key>
-			<real>0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.xenon.ios26ccstyle/reload</string>
-			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
@@ -599,6 +579,32 @@
 			<string>Renderer.Enabled</string>
 			<key>label</key>
 			<string>Renderer enabled (backboardd)</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>0 = renderer default (sharp refraction, colour bleed). Try 6–10 to blur what the glass refracts. If the rim doubles, set it back to 0.</string>
+			<key>label</key>
+			<string>Glass blur radius</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.0</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>glassBlurRadius</string>
+			<key>max</key>
+			<real>40.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -832,7 +838,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>380</real>
+			<real>380.0</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
@@ -840,9 +846,9 @@
 			<key>label</key>
 			<string>Stiffness</string>
 			<key>max</key>
-			<real>800</real>
+			<real>800.0</real>
 			<key>min</key>
-			<real>100</real>
+			<real>100.0</real>
 			<key>showValue</key>
 			<true/>
 		</dict>
@@ -852,7 +858,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>26</real>
+			<real>26.0</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
@@ -860,9 +866,9 @@
 			<key>label</key>
 			<string>Damping</string>
 			<key>max</key>
-			<real>60</real>
+			<real>60.0</real>
 			<key>min</key>
-			<real>5</real>
+			<real>5.0</real>
 			<key>showValue</key>
 			<true/>
 		</dict>
