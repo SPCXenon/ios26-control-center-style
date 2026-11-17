@@ -342,6 +342,7 @@ typedef struct {
     float       fresnelGlareStrength;
     float       borderWidthPixels;
     simd_float4 tintColor;
+    float       blurPx;
 } LGUniforms;
 
 // The render entry point has more arguments than the 11 we model. They are passed on the stack and
@@ -506,7 +507,29 @@ struct Uniforms {
     float  fresnelGlareStrength;
     float  borderWidthPixels;
     float4 tintColor;
+    float  blurPx;
 };
+
+// Disc blur of the refracted backdrop (the glass filter itself carries no radius: a radius pads the
+// captured source and shifts the rim).
+float4 glassSample(texture2d<float> src, sampler s, float2 uv, constant Uniforms &u)
+{
+    float4 c = src.sample(s, uv);
+    float r = u.blurPx;
+    if (r < 0.5 || c.a < 0.01) return c;
+    float2 texel = 1.0 / u.resolution;
+    float4 acc = c;
+    float wsum = 1.0;
+    for (int i = 0; i < 12; i++) {
+        float a = 2.39996 * float(i);
+        float rr = r * sqrt((float(i) + 0.5) / 12.0);
+        float4 t = src.sample(s, uv + float2(cos(a), sin(a)) * rr * texel);
+        if (t.a < 0.01) continue;
+        acc += t;
+        wsum += 1.0;
+    }
+    return acc / wsum;
+}
 
 float quartzGlassEdgeProfile(float distanceFromEdge,
                              float refractionHeight) {
@@ -852,7 +875,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
     zoomMix = zoomMix * zoomMix * (3.0 - 2.0 * zoomMix);
     float2 greenUV = backdropSampleUV(capturePx, px, dispPx,
                                       isCoverSheet, u, zoomMix);
-    float4 greenSample = src.sample(s, greenUV);
+    float4 greenSample = glassSample(src, s, greenUV, u);
 
     float4 fallback = float4(0.0);
     bool loadedFallback = false;
@@ -874,7 +897,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             float2 uv = backdropSampleUV(capturePx, px,
                                           dispPx + aberrationPx * weight,
                                           isCoverSheet, u, zoomMix);
-            float4 sample = src.sample(s, uv);
+            float4 sample = glassSample(src, s, uv, u);
             if (sample.a < 0.01) {
                 if (!loadedFallback) {
                     fallback = src.sample(s, captureUV);
@@ -892,7 +915,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             float2 uv = backdropSampleUV(capturePx, px,
                                           dispPx - aberrationPx * weight,
                                           isCoverSheet, u, zoomMix);
-            float4 sample = src.sample(s, uv);
+            float4 sample = glassSample(src, s, uv, u);
             if (sample.a < 0.01) {
                 if (!loadedFallback) {
                     fallback = src.sample(s, captureUV);
@@ -1353,6 +1376,20 @@ static void lgStartPrefsObserver(void) {
         NULL, CFNotificationSuspensionBehaviorCoalesce);
 }
 
+// Glass blur radius (points) from the tweak's preferences, re-read at most every 1.5 s.
+static float lgGlassBlurPoints(void) {
+    static float v = 8.0f;
+    static CFAbsoluteTime last = 0;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - last > 1.5) {
+        last = now;
+        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.xenon.ios26ccstyle.plist"];
+        id n = d[@"glassBlurRadius"];
+        v = [n isKindOfClass:NSNumber.class] ? fminf(40.0f, fmaxf(0.0f, [n floatValue])) : 8.0f;
+    }
+    return v;
+}
+
 static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
                                float opacity, void *surface, float scale,
                                bool flag, void *cm, void *shape, float *out LG_EXTRA_PARAMS)
@@ -1426,6 +1463,8 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
         ? g_fresnelGlareStrength : 0.0f;
     lu.tintColor          = darkTint ? simd_make_float4(hp->darkTintR, hp->darkTintG, hp->darkTintB, hp->darkTintStrength)
                                   : simd_make_float4(hp->tintR, hp->tintG, hp->tintB, hp->tintStrength);
+
+    lu.blurPx = !strcmp(hp->prefPrefix, "ControlCenter") ? lgGlassBlurPoints() * pixelsPerPoint : 0.0f;
 
     if (!strcmp(hp->prefPrefix, "Keyboard")) {
         static int keyboardGeometryLogs = 0;

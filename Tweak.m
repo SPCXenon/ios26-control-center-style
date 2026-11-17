@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.3.2
+// IOS26CCStyle 0.3.3
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -26,7 +26,6 @@ static CGFloat gRim, gRimWidth;// rim light intensity 0…1, stroke width pt
 static CGFloat gSheen, gTint;  // top sheen alpha, extra fill tint alpha
 // iOS 27-style master slider: 0 = ultra clear … 1 = fully tinted (default 0.5)
 static CGFloat gGlass;         // raw slider value
-static CGFloat gGlassBlur;     // blur radius of the refraction glass (backdrop captured before refraction)
 static CGFloat gMatAlpha;      // alpha of the system material views (blur) behind modules
 static CGFloat gEffTint;       // resulting fill tint alpha
 static CGFloat gRimMul;        // rim brightness multiplier (clearer glass = brighter edges)
@@ -121,7 +120,6 @@ static void LoadPrefs(void) {
     gInner         = (CGFloat)PrefDouble(@"innerRim", 0.1, 0.0, 1.0);
     gHot           = (CGFloat)PrefDouble(@"glow", 0.15, 0.0, 0.3);
     gGlass         = (CGFloat)PrefDouble(@"glassTint", 0.5, 0.0, 1.0);
-    gGlassBlur     = (CGFloat)PrefDouble(@"glassBlurRadius", 8.0, 0.0, 40.0);
     gMatAlpha      = 0.35 + 0.65 * gGlass;
     gEffTint       = MIN(0.5, 0.03 + 0.17 * gGlass + gTint);
     gRimMul        = 1.3 - 0.5 * gGlass;
@@ -752,30 +750,16 @@ static BOOL gGlassObserverSet;
         NSMutableString *type = [NSMutableString stringWithFormat:@"xenon.liquidglass.cc.r%ld", (long)step];
         if (self.glassDark) [type appendString:@".dark"];
         if (_variant) [type appendString:@".refresh"];
-        if ([_attachedType isEqualToString:type] && layer.filters.count == (gGlassBlur >= 0.5 ? 2u : 1u)) return;
+        if ([_attachedType isEqualToString:type] && layer.filters.count == 1) return;
 
         Class filterCls = NSClassFromString(@"CAFilter");
         if (!filterCls) return;
         id filter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(
             filterCls, NSSelectorFromString(@"filterWithType:"), type);
         if (!filter) return;
-        // The glass filter keeps no radius of its own (a radius pads the captured source and shifts the
-        // rim). The blur is a separate stock gaussian ahead of it in the chain.
-        NSMutableArray *chain = [NSMutableArray array];
-        if (gGlassBlur >= 0.5) {
-            id blur = ((id (*)(Class, SEL, NSString *))objc_msgSend)(filterCls, NSSelectorFromString(@"filterWithType:"), @"gaussianBlur");
-            @try { [blur setValue:@(gGlassBlur) forKey:@"inputRadius"]; [blur setValue:@YES forKey:@"inputNormalizeEdges"]; } @catch (__unused NSException *e) {}
-            if (blur) [chain addObject:blur];
-        }
-        [chain addObject:filter];
-        layer.filters = chain;
+        layer.filters = @[filter];   // no radius here: the shader blurs the backdrop itself
         _attachedType = [type copy];
     } @catch (__unused NSException *e) {}
-}
-
-- (void)applyBlur {
-    _attachedType = nil;   // build a fresh filter with (or without) the radius
-    [self attachFilter];
 }
 
 // Render parameters changed in backboardd: flip to the ".refresh" twin atom so the
@@ -1434,7 +1418,6 @@ static void PrefsChanged(CFNotificationCenterRef center, void *observer, CFStrin
                          const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
         LoadPrefs();
-        for (XCGlassView *g in gGlassViews.allObjects) [g applyBlur];
         for (UIView *v in gTracked.allObjects) {
             if (objc_getAssociatedObject(v, kMenuKey) && !objc_getAssociatedObject(v, kStyledKey)) {
                 ApplyMenuDecor(v);

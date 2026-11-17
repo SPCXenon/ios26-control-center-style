@@ -584,7 +584,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Blur applied to what the glass refracts (default 8). 0 = renderer default (sharp, colour bleed). If the rim doubles, set it to 0.</string>
+			<string>Blur of the refracted backdrop, done in the glass shader (default 8). 0 = sharp. Needs a backboardd restart once after installing.</string>
 			<key>label</key>
 			<string>Glass blur radius</string>
 		</dict>
