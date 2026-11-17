@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.25
+// IOS26CCStyle 0.2.26
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -817,7 +817,7 @@ static void RemoveGlass(UIView *mat) {
 static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int depth) {
     if (depth > 2) return;
     NSString *rn = NSStringFromClass(root.class);
-    if ([rn hasPrefix:@"MRU"] && [rn containsString:@"Volume"]) want = NO;
+    if ([rn hasPrefix:@"MRU"] && ([rn containsString:@"Volume"] || [rn containsString:@"Artwork"])) want = NO;   // the empty-artwork placeholder keeps its stock look
     for (UIView *s in [root.subviews copy]) {
         if ([s isKindOfClass:XCGlassView.class]) continue;
         if (IsExactMaterial(s)) {
