@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.23
+// IOS26CCStyle 0.2.24
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -303,6 +303,17 @@ static UIImage *EdgeImage(CGFloat cap, CGFloat radius, BOOL dark, CGFloat scale)
                            RimUID(0.40 * rs * rimE, -1), clear, clear, RimUID(0.30 * rs * rimE, 1), NO);
             StrokeGradient(c, size, radius, rimInset, MAX(3.5, bw),
                            RimUID(0.17 * rs * rimE, -1), clear, clear, RimUID(0.12 * rs * rimE, 1), NO);
+            // iOS 27: broad, soft dispersion bevel. Warm at the top-left / top-right, cool blue-teal at the
+            // bottom-right / bottom-left, fading inward, so the whole edge glows instead of a hairline.
+            CGFloat dk = 0.4 + 0.6 * MIN(1.0, gDisp);
+            CGFloat da = MIN(0.5, 0.26 * rimE * rs * dk);
+            CGFloat dw = MIN(7.0, MAX(3.5, radius * 0.24));
+            UIColor *warm = [UIColor colorWithRed:1.0 green:0.80 blue:0.60 alpha:da];
+            UIColor *cool = [UIColor colorWithRed:0.52 green:0.78 blue:1.0 alpha:da];
+            UIColor *warmS = [UIColor colorWithRed:1.0 green:0.82 blue:0.66 alpha:da * 0.6];
+            UIColor *coolS = [UIColor colorWithRed:0.56 green:0.80 blue:1.0 alpha:da * 0.6];
+            StrokeGradient(c, size, radius, rimInset, dw, warm, clear, clear, cool, NO);
+            StrokeGradient(c, size, radius, rimInset, dw, warmS, clear, clear, coolS, YES);
             // second, refracted line just inside, lit from the opposite diagonal
             StrokeGradient(c, size, radius, rimInset + gRimWidth + 1.1, 0.55,
                            RimUI(0.05 * rimE), RimUI(0.28 * rimE), RimUI(0.28 * rimE), RimUI(0.05 * rimE), YES);
