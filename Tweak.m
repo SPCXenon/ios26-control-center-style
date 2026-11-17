@@ -691,7 +691,6 @@ static BOOL gGlassObserverSet;
 @property (nonatomic) BOOL glassDark;
 - (void)attachFilter;
 - (void)reloadFilter;
-- (void)applyBlur;
 @end
 
 @implementation XCGlassView {
