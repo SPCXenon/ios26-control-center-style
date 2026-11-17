@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.27
+// IOS26CCStyle 0.2.28
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -1140,8 +1140,14 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     BOOL glassOn = gRefract && GlassRendererReady();
 
     if (kind == CCKindModuleFill) {
-        CGFloat ft = glassOn ? 0.0 : (darkUI ? gEffTint * 0.2 : gEffTint * 0.85);
-        v.backgroundColor = ft > 0.001 ? [gFillColor colorWithAlphaComponent:ft] : nil;
+        if (glassOn) {
+            // the hidden stock material used to give disabled tiles their frosted base; keep it as a tint
+            CGFloat ta = darkUI ? 0.10 + 0.22 * gGlass : 0.04 + 0.10 * gGlass;
+            v.backgroundColor = [UIColor colorWithWhite:darkUI ? 0.08 : 1.0 alpha:ta];
+        } else {
+            CGFloat ft = darkUI ? gEffTint * 0.2 : gEffTint * 0.85;
+            v.backgroundColor = ft > 0.001 ? [gFillColor colorWithAlphaComponent:ft] : nil;
+        }
         ApplyExtraBlur(v, b);
     }
 
