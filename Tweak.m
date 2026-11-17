@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.22
+// IOS26CCStyle 0.2.23
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -1326,7 +1326,27 @@ static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
 // The rim / sheen layers we add are plain sublayers whose frame is set at layout time, so they
 // jump to the final size while the view itself springs there (the ghost outlines). Give them the
 // same spring on size and position as the view.
+// The glass that replaces an MTMaterialView must animate exactly like it. Copy every stock property
+// animation the material's layer receives onto the glass layer (same keyPath, same values), after
+// syncing the glass model layer to the material's final model values.
+static void MirrorToGlass(CALayer *layer, CAAnimation *anim) {
+    if (![anim isKindOfClass:CAPropertyAnimation.class]) return;
+    UIView *dv = (UIView *)layer.delegate;
+    if (![dv isKindOfClass:UIView.class] || ![NSStringFromClass(dv.class) containsString:@"MTMaterialView"]) return;
+    UIView *glass = objc_getAssociatedObject(dv, kGlassKey);
+    if (!glass || [glass isKindOfClass:NSNull.class]) return;
+    NSString *kp = ((CAPropertyAnimation *)anim).keyPath;
+    static NSSet *ok;
+    if (!ok) ok = [NSSet setWithArray:@[@"position", @"bounds.size", @"bounds.origin", @"bounds", @"cornerRadius", @"transform"]];
+    if (!kp || ![ok containsObject:kp]) return;
+    CALayer *gl = glass.layer;
+    if (!CGRectEqualToRect(gl.bounds, layer.bounds)) gl.bounds = layer.bounds;
+    if (!CGPointEqualToPoint(gl.position, layer.position)) gl.position = layer.position;
+    [gl addAnimation:[anim copy] forKey:[@"xc.glass." stringByAppendingString:kp]];
+}
+
 static void FollowSizeAnimation(CALayer *layer, CAAnimation *anim) {
+    MirrorToGlass(layer, anim);
     if (![anim isKindOfClass:CASpringAnimation.class]) return;
     CASpringAnimation *sa = (CASpringAnimation *)anim;
     if (![sa.keyPath isEqualToString:@"bounds.size"]) return;
@@ -1338,22 +1358,6 @@ static void FollowSizeAnimation(CALayer *layer, CAAnimation *anim) {
     const void *k[6] = { kEdgesKey, kHotTLKey, kHotBRKey, kStreakKey, kSheenKey, kShadeKey };
     (void)keys;
     CGSize f = [fromV CGSizeValue], t = [toV CGSizeValue];
-    // The glass that replaces an MTMaterialView must grow with it. The system animates the material's
-    // layer directly (no setter we could hook), so give the glass the same springs; its model frame
-    // jumps to the final frame first, as the material's did.
-    UIView *glass = objc_getAssociatedObject(dv, kGlassKey);
-    if (glass && ![glass isKindOfClass:NSNull.class]) {
-        CGRect fin = dv.frame;
-        if (!CGRectEqualToRect(glass.frame, fin)) glass.frame = fin;
-        CASpringAnimation *gs = [sa copy];
-        [glass.layer addAnimation:gs forKey:@"xc.glass.size"];
-        CASpringAnimation *gp = [sa copy];
-        gp.keyPath = @"position";
-        CGPoint c = dv.center;
-        gp.fromValue = [NSValue valueWithCGPoint:CGPointMake(c.x - (t.width - f.width) / 2, c.y - (t.height - f.height) / 2)];
-        gp.toValue = [NSValue valueWithCGPoint:c];
-        [glass.layer addAnimation:gp forKey:@"xc.glass.pos"];
-    }
     for (int i = 0; i < 6; i++) {
         CALayer *l = objc_getAssociatedObject(dv, k[i]);
         if (![l isKindOfClass:CALayer.class] || l.hidden) continue;
