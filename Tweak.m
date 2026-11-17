@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.24
+// IOS26CCStyle 0.2.25
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -1353,7 +1353,11 @@ static void MirrorToGlass(CALayer *layer, CAAnimation *anim) {
     CALayer *gl = glass.layer;
     if (!CGRectEqualToRect(gl.bounds, layer.bounds)) gl.bounds = layer.bounds;
     if (!CGPointEqualToPoint(gl.position, layer.position)) gl.position = layer.position;
-    [gl addAnimation:[anim copy] forKey:[@"xc.glass." stringByAppendingString:kp]];
+    CAAnimation *cp = [anim copy];
+    cp.removedOnCompletion = YES;           // never let a copied animation pin the glass at an old size
+    cp.fillMode = kCAFillModeRemoved;
+    if (cp.repeatCount > 0 || cp.autoreverses) return;
+    [gl addAnimation:cp forKey:[@"xc.glass." stringByAppendingString:kp]];
 }
 
 static void FollowSizeAnimation(CALayer *layer, CAAnimation *anim) {
