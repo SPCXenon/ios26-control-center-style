@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.29
+// IOS26CCStyle 0.2.30
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -839,8 +839,13 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
             g.layer.masksToBounds = YES;
             g.glassRadius = radius;
             g.glassDark = dark;
+            // base tint on the glass itself (the stock background view is alpha 0)
+            g.backgroundColor = [UIColor colorWithWhite:dark ? 0.08 : 1.0 alpha:dark ? 0.10 + 0.22 * gGlass : 0.04 + 0.10 * gGlass];
             [g attachFilter];
-            if (!s.hidden) s.hidden = YES;
+            // Without a blur radius the glass refracts a sharp page (colour bleed, crisp text). The stock
+            // material below is already blurred and is part of what the glass samples, so keep it.
+            BOOL hideMat = gGlassBlur >= 0.5;
+            if (s.hidden != hideMat) s.hidden = hideMat;
             continue;
         }
         if ([NSStringFromClass(s.class) containsString:@"Slider"]) continue;
@@ -1073,10 +1078,14 @@ static void ApplyStyle(UIView *v, CCKind kind);
 
 // The expanded volume / mute panel is a 321x360 container holding a 135 pt wide pill (plus a hidden
 // twin). The container itself has no visible shape in stock iOS, so it gets no rim, glass or corner.
-static BOOL ContainerHoldsVolume(UIView *v) {
-    for (UIView *s in v.subviews) if (IsVolumeHost(s)) return YES;
+static BOOL HoldsSliderOrVolume(UIView *v, int depth) {
+    for (UIView *s in v.subviews) {
+        if (IsVolumeHost(s) || [NSStringFromClass(s.class) containsString:@"SliderView"]) return YES;
+        if (depth < 2 && HoldsSliderOrVolume(s, depth + 1)) return YES;
+    }
     return NO;
 }
+static BOOL ContainerHoldsVolume(UIView *v) { return HoldsSliderOrVolume(v, 0); }
 
 static void ApplyStyle(UIView *v, CCKind kind) {
     if (!v.window) return;
@@ -1140,14 +1149,8 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     BOOL glassOn = gRefract && GlassRendererReady();
 
     if (kind == CCKindModuleFill) {
-        if (glassOn) {
-            // the hidden stock material used to give disabled tiles their frosted base; keep it as a tint
-            CGFloat ta = darkUI ? 0.10 + 0.22 * gGlass : 0.04 + 0.10 * gGlass;
-            v.backgroundColor = [UIColor colorWithWhite:darkUI ? 0.08 : 1.0 alpha:ta];
-        } else {
-            CGFloat ft = darkUI ? gEffTint * 0.2 : gEffTint * 0.85;
-            v.backgroundColor = ft > 0.001 ? [gFillColor colorWithAlphaComponent:ft] : nil;
-        }
+        CGFloat ft = glassOn ? 0.0 : (darkUI ? gEffTint * 0.2 : gEffTint * 0.85);
+        v.backgroundColor = ft > 0.001 ? [gFillColor colorWithAlphaComponent:ft] : nil;
         ApplyExtraBlur(v, b);
     }
 
