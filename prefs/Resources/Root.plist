@@ -584,7 +584,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Blur of the refracted backdrop, done in the glass shader (default 8). 0 = sharp. Needs a backboardd restart once after installing.</string>
+			<string>Blur of the refracted backdrop, done in the glass shader (default 20). 0 = sharp. Needs a backboardd restart once after installing.</string>
 			<key>label</key>
 			<string>Glass blur radius</string>
 		</dict>
@@ -594,7 +594,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>8.0</real>
+			<real>20.0</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>

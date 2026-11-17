@@ -520,15 +520,19 @@ float4 glassSample(texture2d<float> src, sampler s, float2 uv, constant Uniforms
     float2 texel = 1.0 / u.resolution;
     float4 acc = c;
     float wsum = 1.0;
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 24; i++) {
         float a = 2.39996 * float(i);
-        float rr = r * sqrt((float(i) + 0.5) / 12.0);
+        float rr = r * sqrt((float(i) + 0.5) / 24.0);
         float4 t = src.sample(s, uv + float2(cos(a), sin(a)) * rr * texel);
         if (t.a < 0.01) continue;
         acc += t;
         wsum += 1.0;
     }
-    return acc / wsum;
+    float4 o = acc / wsum;
+    // frosted glass is less colourful than the page behind it
+    float lum = dot(o.rgb, float3(0.2126, 0.7152, 0.0722));
+    o.rgb = mix(float3(lum), o.rgb, 0.72);
+    return o;
 }
 
 float quartzGlassEdgeProfile(float distanceFromEdge,
@@ -1378,14 +1382,14 @@ static void lgStartPrefsObserver(void) {
 
 // Glass blur radius (points) from the tweak's preferences, re-read at most every 1.5 s.
 static float lgGlassBlurPoints(void) {
-    static float v = 8.0f;
+    static float v = 20.0f;
     static CFAbsoluteTime last = 0;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     if (now - last > 1.5) {
         last = now;
         NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.xenon.ios26ccstyle.plist"];
         id n = d[@"glassBlurRadius"];
-        v = [n isKindOfClass:NSNumber.class] ? fminf(40.0f, fmaxf(0.0f, [n floatValue])) : 8.0f;
+        v = [n isKindOfClass:NSNumber.class] ? fminf(40.0f, fmaxf(0.0f, [n floatValue])) : 20.0f;
     }
     return v;
 }
