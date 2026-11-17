@@ -10,6 +10,7 @@ IOS26CCStylePrefs_FILES = IOS26CCRootListController.m
 IOS26CCStylePrefs_FRAMEWORKS = UIKit
 IOS26CCStylePrefs_PRIVATE_FRAMEWORKS = Preferences
 IOS26CCStylePrefs_INSTALL_PATH = /Library/PreferenceBundles
-IOS26CCStylePrefs_CFLAGS = -fobjc-arc
+IOS26CCStylePrefs_CFLAGS = -fobjc-arc -Os -fvisibility=hidden
+IOS26CCStylePrefs_LDFLAGS = -Wl,-dead_strip
 
 include $(THEOS_MAKE_PATH)/bundle.mk

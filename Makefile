@@ -9,7 +9,8 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME := IOS26CCStyle
 IOS26CCStyle_FILES := Tweak.m
 IOS26CCStyle_FRAMEWORKS := UIKit QuartzCore
-IOS26CCStyle_CFLAGS := -fobjc-arc -Wno-deprecated-declarations
+IOS26CCStyle_CFLAGS := -fobjc-arc -Wno-deprecated-declarations -Os -fvisibility=hidden -ffunction-sections -fdata-sections
+IOS26CCStyle_LDFLAGS := -Wl,-dead_strip
 
 SUBPROJECTS += prefs backboardd
 
