@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.30
+// IOS26CCStyle 0.2.31
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -761,7 +761,7 @@ static BOOL gGlassObserverSet;
         if (!filter) return;
         // Left unset the renderer uses its own stock blur. Forcing a radius (even 1) replaced that
         // blur and padded the source texture, which clears the glass and offsets the rim.
-        if (gGlassBlur >= 0.5) { @try { [filter setValue:@(gGlassBlur) forKey:@"inputRadius"]; } @catch (__unused NSException *e) {} }
+        if (gGlassBlur >= 0.5) { @try { [filter setValue:@(gGlassBlur) forKey:@"inputRadius"]; [filter setValue:@YES forKey:@"inputNormalizeEdges"]; } @catch (__unused NSException *e) {} }
         layer.filters = @[filter];
         _attachedType = [type copy];
     } @catch (__unused NSException *e) {}
@@ -840,12 +840,9 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
             g.glassRadius = radius;
             g.glassDark = dark;
             // base tint on the glass itself (the stock background view is alpha 0)
-            g.backgroundColor = [UIColor colorWithWhite:dark ? 0.08 : 1.0 alpha:dark ? 0.10 + 0.22 * gGlass : 0.04 + 0.10 * gGlass];
+            g.backgroundColor = [UIColor colorWithWhite:dark ? 0.08 : 1.0 alpha:dark ? 0.06 + 0.16 * gGlass : 0.03 + 0.08 * gGlass];
             [g attachFilter];
-            // Without a blur radius the glass refracts a sharp page (colour bleed, crisp text). The stock
-            // material below is already blurred and is part of what the glass samples, so keep it.
-            BOOL hideMat = gGlassBlur >= 0.5;
-            if (s.hidden != hideMat) s.hidden = hideMat;
+            if (!s.hidden) s.hidden = YES;
             continue;
         }
         if ([NSStringFromClass(s.class) containsString:@"Slider"]) continue;
