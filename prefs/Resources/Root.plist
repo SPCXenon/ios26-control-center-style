@@ -576,9 +576,9 @@
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
-			<string>glassBlur</string>
+			<string>glassBlurRadius</string>
 			<key>label</key>
-			<string>Glass blur (experimental, misaligns rims)</string>
+			<string>Glass blur radius (0 = stock)</string>
 			<key>max</key>
 			<real>40</real>
 			<key>min</key>

@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.2.26
+// IOS26CCStyle 0.2.27
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -121,7 +121,7 @@ static void LoadPrefs(void) {
     gInner         = (CGFloat)PrefDouble(@"innerRim", 0.1, 0.0, 1.0);
     gHot           = (CGFloat)PrefDouble(@"glow", 0.15, 0.0, 0.3);
     gGlass         = (CGFloat)PrefDouble(@"glassTint", 0.5, 0.0, 1.0);
-    gGlassBlur     = (CGFloat)PrefDouble(@"glassBlur", 0.0, 0.0, 40.0);
+    gGlassBlur     = (CGFloat)PrefDouble(@"glassBlurRadius", 0.0, 0.0, 40.0);
     gMatAlpha      = 0.35 + 0.65 * gGlass;
     gEffTint       = MIN(0.5, 0.03 + 0.17 * gGlass + gTint);
     gRimMul        = 1.3 - 0.5 * gGlass;
@@ -153,8 +153,6 @@ static const void *kBlurKey   = &kBlurKey;    // optional extra blur view
 static const void *kSigKey    = &kSigKey;
 static const void *kStreakKey  = &kStreakKey;  // diagonal reflection band
 static const void *kShadeKey   = &kShadeKey;   // top-lit sphere shading (circles)
-static const void *kBgTimerKey = &kBgTimerKey; // on the window: backdrop re-check pending
-static const void *kBgTargetKey = &kBgTargetKey; // on the backdrop view: alpha we set
 static const void *kStyledKey = &kStyledKey; // set on views styled through a class hook
 static const void *kMenuKey   = &kMenuKey;   // set on views decorated by the menu walk
 static const void *kLastRKey  = &kLastRKey;  // corner radius we applied last
@@ -331,7 +329,23 @@ static UIImage *EdgeImage(CGFloat cap, CGFloat radius, BOOL dark, CGFloat scale)
 // ("darkened edge" + "brighter specular highlights"). Cheap by construction: one image
 // layer for all edge work plus a few unmasked gradient layers (the view itself already
 // clips to its rounded shape).
+// Nested views of one shape (container, button module, menu wrapper) must not each draw a rim:
+// that is the double edge. Only the outermost one keeps its decoration.
+static BOOL SameShapeAncestorDecorated(UIView *v, CGRect b) {
+    UIView *a = v.superview;
+    for (int i = 0; a && i < 5; i++, a = a.superview) {
+        CALayer *e = objc_getAssociatedObject(a, kEdgesKey);
+        if (!e || e.hidden || e.superlayer != a.layer) continue;
+        CGRect r = [v convertRect:b toView:a];
+        CGSize as = a.bounds.size;
+        if (fabs(r.size.width - as.width) <= 16.0 && fabs(r.size.height - as.height) <= 16.0 &&
+            fabs(r.origin.x) <= 16.0 && fabs(r.origin.y) <= 16.0) return YES;
+    }
+    return NO;
+}
+
 static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
+    if (SameShapeAncestorDecorated(v, b)) { HideDecor(v); return; }
     BOOL dark = IsDarkUI(v);
     CGFloat shortSide = MIN(b.size.width, b.size.height);
     BOOL circle = fabs(b.size.width - b.size.height) < 2.0 && radius >= shortSide / 2.0 - 0.5;
@@ -458,13 +472,11 @@ static void ApplyExtraBlur(UIView *v, CGRect b) {
 
 // Dims the system blur material behind a view so the wallpaper shows through.
 static const void *kGlassKey = &kGlassKey;   // on the MTMaterialView: its XCGlassView
-static BOOL gOwnAlpha;                              // YES while the tweak itself writes a material alpha
-static const void *kStockAlphaKey = &kStockAlphaKey; // on the MTMaterialView: last alpha the system set
 static void SetMaterialAlpha(UIView *root, int depth, CGFloat alpha) {
     if (depth > 3) return;
     for (UIView *s in root.subviews) {
         if ([NSStringFromClass(s.class) containsString:@"MaterialView"]) {
-            if (fabs(s.alpha - alpha) > 0.001) { gOwnAlpha = YES; s.alpha = alpha; gOwnAlpha = NO; }
+            if (fabs(s.alpha - alpha) > 0.001) s.alpha = alpha;
             continue;
         }
         SetMaterialAlpha(s, depth + 1, alpha);
@@ -482,6 +494,7 @@ static BOOL IsVolumeHost(UIView *v) {
 static void ApplyMenuDecor(UIView *v) {
     if (!v.window) return;
     if (IsVolumeHost(v)) { if (objc_getAssociatedObject(v, kMenuKey)) HideDecor(v); return; }
+    if ([NSStringFromClass(v.class) hasPrefix:@"XC"]) return;   // our own glass / fill views never get a rim
     CALayer *layer = v.layer;
     CGRect b = v.bounds;
     // Only views the system already rounds AND clips: the glass layers stay inside the shape.
@@ -597,22 +610,6 @@ static void hook_setAlpha(UIView *self, SEL _cmd, CGFloat a) {
     if (b) b.alpha = a;
 }
 
-
-// The glass replaces its MTMaterialView at the material's frame, but the frame was only copied at
-// layout time. When a module expands the stock code animates the material's bounds/centre; the
-// second time a panel opens there is no new layout pass of ours, so the glass stayed tile sized
-// (ghost corner square, bare panel). Follow the material whenever its geometry is set; because this
-// runs inside the system's animation block the glass gets the same spring.
-static void (*orig_setBounds)(UIView *, SEL, CGRect);
-static void (*orig_setCenter)(UIView *, SEL, CGPoint);
-static void FollowMaterial(UIView *m) {
-    UIView *g = objc_getAssociatedObject(m, kGlassKey);
-    if (!g) return;
-    CGRect f = m.frame;
-    if (!CGRectEqualToRect(g.frame, f)) g.frame = f;
-}
-static void hook_setBounds(UIView *self, SEL _cmd, CGRect r) { orig_setBounds(self, _cmd, r); FollowMaterial(self); }
-static void hook_setCenter(UIView *self, SEL _cmd, CGPoint p) { orig_setCenter(self, _cmd, p); FollowMaterial(self); }
 
 static BOOL IsBgCandidate(UIView *s, UIWindow *w) {
     CGSize ws = w.bounds.size;
@@ -762,21 +759,17 @@ static BOOL gGlassObserverSet;
         id filter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(
             filterCls, NSSelectorFromString(@"filterWithType:"), type);
         if (!filter) return;
-        // The renderer refracts the blurred backdrop; without a radius the glass shows the page
-        // almost sharp (clear tiles with colourful bleed-through). Radius 1 is the minimum that
-        // is not treated as "no blur".
-        @try { [filter setValue:@(MAX(1.0, gGlassBlur)) forKey:@"inputRadius"]; } @catch (__unused NSException *e) {}
+        // Left unset the renderer uses its own stock blur. Forcing a radius (even 1) replaced that
+        // blur and padded the source texture, which clears the glass and offsets the rim.
+        if (gGlassBlur >= 0.5) { @try { [filter setValue:@(gGlassBlur) forKey:@"inputRadius"]; } @catch (__unused NSException *e) {} }
         layer.filters = @[filter];
         _attachedType = [type copy];
     } @catch (__unused NSException *e) {}
 }
 
 - (void)applyBlur {
-    CALayer *layer = self.layer;
-    id f = layer.filters.firstObject;
-    if (!f) return;
-    @try { [f setValue:@(MAX(1.0, gGlassBlur)) forKey:@"inputRadius"]; } @catch (__unused NSException *e) { return; }
-    layer.filters = @[f];
+    _attachedType = nil;   // build a fresh filter with (or without) the radius
+    [self attachFilter];
 }
 
 // Render parameters changed in backboardd: flip to the ".refresh" twin atom so the
@@ -1002,8 +995,6 @@ static void DumpViewOnce(UIView *v, CGFloat radius, const char *tag) {
 }
 
 static void MotionToggle(UIView *v, BOOL on);
-static BOOL OnFillVisible(UIView *v, int depth);
-
 static void StyleOnFillsTop(UIView *v, CGFloat radius, BOOL dark) {
     DumpViewOnce(v, radius, "module");
     int n = StyleOnFills(v, radius, dark, 1);
@@ -1082,7 +1073,6 @@ static void ApplyStyle(UIView *v, CCKind kind);
 
 // The expanded volume / mute panel is a 321x360 container holding a 135 pt wide pill (plus a hidden
 // twin). The container itself has no visible shape in stock iOS, so it gets no rim, glass or corner.
-static void DumpExpanded(UIView *v);
 static BOOL ContainerHoldsVolume(UIView *v) {
     for (UIView *s in v.subviews) if (IsVolumeHost(s)) return YES;
     return NO;
@@ -1369,9 +1359,7 @@ static void FollowSizeAnimation(CALayer *layer, CAAnimation *anim) {
     if (![fromV isKindOfClass:NSValue.class] || ![toV isKindOfClass:NSValue.class]) return;
     if (strcmp([(NSValue *)fromV objCType], @encode(CGSize)) != 0) return;
     UIView *dv = (UIView *)layer.delegate;
-    static const void *const *keys[6];
     const void *k[6] = { kEdgesKey, kHotTLKey, kHotBRKey, kStreakKey, kSheenKey, kShadeKey };
-    (void)keys;
     CGSize f = [fromV CGSizeValue], t = [toV CGSizeValue];
     for (int i = 0; i < 6; i++) {
         CALayer *l = objc_getAssociatedObject(dv, k[i]);
@@ -1469,8 +1457,6 @@ static void IOS26CCStyleInit(void) {
         InstallTouch_Round("CCUIRoundButton");
         InstallTouch_Slider("CCUIContinuousSliderView");
         InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
-        InstallHook("MTMaterialView", @selector(setBounds:), (IMP)hook_setBounds, (IMP *)&orig_setBounds);
-        InstallHook("MTMaterialView", @selector(setCenter:), (IMP)hook_setCenter, (IMP *)&orig_setCenter);
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,
