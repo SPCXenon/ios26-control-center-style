@@ -18,7 +18,7 @@ static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
 
 // MARK: - Preferences ---------------------------------------------------------
 
-static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion;
+static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion, gTouchGlow;
 static double  gPageK = 50.0, gPageFx = 60.0;       // page spring stiffness % of the main one, page effect %
 static double  gSpringK = 380.0, gSpringD = 26.0;   // iOS 27 animation spring (stiffness, damping)
 static BOOL    gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus;
@@ -1242,7 +1242,6 @@ static void MotionPress(UIView *v, double target, BOOL down) {
     }
 }
 
-static BOOL gTouchGlow = YES;
 
 // iOS 26 interactive glass: a soft light blooms under the finger and fades when it lifts.
 // It sits below the labels and the on-fill, inside a rounded clip.
