@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.3.5
+// IOS26CCStyle 0.3.6
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -1306,7 +1306,10 @@ static BOOL IsExpandContext(UIView *v) {
 
 static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
     if (!gMotion || !gEnabled || ![anim isKindOfClass:CASpringAnimation.class]) return anim;
-    if (anim.duration < 0.3 || anim.duration > 0.55) return anim;
+    // page open / page scroll settles: stock runs these 0.55-1.6 s long; iOS 27 settles them quicker
+    // with a softer, slightly overshooting spring
+    BOOL page = anim.duration > 0.55 && anim.duration <= 1.6;
+    if (!page && (anim.duration < 0.3 || anim.duration > 0.55)) return anim;
     id del = layer.delegate;
     if (![del isKindOfClass:UIView.class]) return anim;
     NSString *kp = ((CAPropertyAnimation *)anim).keyPath;
@@ -1314,7 +1317,9 @@ static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
     if (!ok) ok = [NSSet setWithArray:@[@"position", @"bounds.size", @"bounds.origin", @"bounds", @"cornerRadius", @"transform"]];
     if (![ok containsObject:kp] || !IsExpandContext(del)) return anim;
     CASpringAnimation *c = [anim copy];
-    c.mass = 1.0; c.stiffness = gSpringK; c.damping = gSpringD;
+    c.mass = 1.0;
+    c.stiffness = page ? gSpringK * 0.6 : gSpringK;
+    c.damping = page ? gSpringD * 0.8 : gSpringD;
     c.duration = c.settlingDuration;
     return c;
 }
