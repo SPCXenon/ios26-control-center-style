@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.3.7
+// IOS26CCStyle 0.3.8
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -1444,22 +1444,33 @@ static void DumpPageScroll(UIScrollView *sv) {
     [o writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-scroll.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
+static void CollectPages(UIView *v, int depth, NSMutableArray *out) {
+    for (UIView *s in v.subviews) {
+        if ([NSStringFromClass(s.class) hasSuffix:@"IconListView"]) { [out addObject:s]; continue; }
+        if (depth < 3) CollectPages(s, depth + 1, out);
+    }
+}
+
 static void new_sv_ls(UIScrollView *self, SEL _cmd) {
     orig_sv_ls(self, _cmd);
     if (!gMotion || !gEnabled) return;
     NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
     if (!flag) {
-        CGSize c = self.contentSize, b = self.bounds.size;
-        BOOL is = b.height > 300 && c.height >= b.height * 1.5 && HasModuleContainer(self, 0);
-        flag = @(is);
+        flag = @([NSStringFromClass(self.class) containsString:@"IconScrollView"]);
         objc_setAssociatedObject(self, kPageScrollKey, flag, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        if (is) DumpPageScroll(self);
+        if (flag.boolValue) DumpPageScroll(self);
     }
     if (!flag.boolValue) return;
-    CGFloat H = self.bounds.size.height, off = self.contentOffset.y;
-    for (UIView *p in self.subviews) {
-        if ([NSStringFromClass(p.class) hasPrefix:@"_UIScrollViewScrollIndicator"] || p.bounds.size.height < H * 0.5) continue;
-        CGFloat a = MIN(1.0, fabs((p.center.y - off - H * 0.5) / H));
+    CGSize c = self.contentSize, b = self.bounds.size;
+    BOOL vertical = c.height > b.height * 1.2;
+    CGFloat span = vertical ? b.height : b.width;
+    if (span < 100) return;
+    NSMutableArray *pages = [NSMutableArray array];
+    CollectPages(self, 0, pages);
+    for (UIView *p in pages) {
+        CGPoint m = [p.superview convertPoint:p.center toView:self];
+        CGFloat d = vertical ? (m.y - self.contentOffset.y - span * 0.5) : (m.x - self.contentOffset.x - span * 0.5);
+        CGFloat a = MIN(1.0, fabs(d / span));
         p.layer.opacity = 1.0 - 0.6 * a;
         p.layer.transform = a < 0.001 ? CATransform3DIdentity : CATransform3DMakeScale(1.0 - 0.07 * a, 1.0 - 0.07 * a, 1.0);
     }
