@@ -1426,14 +1426,6 @@ DEFINE_TOUCH_HOOKS(Slider, 1.04)
 static void (*orig_sv_ls)(UIScrollView *, SEL);
 static const void *kPageScrollKey = &kPageScrollKey;
 
-static BOOL HasModuleContainer(UIView *v, int depth) {
-    for (UIView *s in v.subviews) {
-        if ([NSStringFromClass(s.class) isEqualToString:@"CCUIContentModuleContentContainerView"]) return YES;
-        if (depth < 5 && HasModuleContainer(s, depth + 1)) return YES;
-    }
-    return NO;
-}
-
 static void DumpPageScroll(UIScrollView *sv) {
     NSMutableString *o = [NSMutableString stringWithFormat:@"%@ bounds=%@ content=%@ paging=%d\n", NSStringFromClass(sv.class),
         NSStringFromCGRect(sv.bounds), NSStringFromCGSize(sv.contentSize), sv.pagingEnabled];
