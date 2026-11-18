@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.3.6
+// IOS26CCStyle 0.3.7
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -1420,6 +1420,51 @@ DEFINE_TOUCH_HOOKS(Slider, 1.04)
 
 // MARK: - Live reload ---------------------------------------------------------
 
+// ---- iOS 27 page scrolling ------------------------------------------------------------------
+// The Control Center pages sit in a plain UIScrollView, so there is no spring to retune: the effect
+// is driven by the scroll offset. A page scales down and fades as it leaves the centre.
+static void (*orig_sv_ls)(UIScrollView *, SEL);
+static const void *kPageScrollKey = &kPageScrollKey;
+
+static BOOL HasModuleContainer(UIView *v, int depth) {
+    for (UIView *s in v.subviews) {
+        if ([NSStringFromClass(s.class) isEqualToString:@"CCUIContentModuleContentContainerView"]) return YES;
+        if (depth < 5 && HasModuleContainer(s, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+static void DumpPageScroll(UIScrollView *sv) {
+    NSMutableString *o = [NSMutableString stringWithFormat:@"%@ bounds=%@ content=%@ paging=%d\n", NSStringFromClass(sv.class),
+        NSStringFromCGRect(sv.bounds), NSStringFromCGSize(sv.contentSize), sv.pagingEnabled];
+    for (UIView *p in sv.subviews) {
+        [o appendFormat:@"  %@ frame=%@ subviews=%lu\n", NSStringFromClass(p.class), NSStringFromCGRect(p.frame), (unsigned long)p.subviews.count];
+        for (UIView *q in p.subviews) [o appendFormat:@"    %@ frame=%@\n", NSStringFromClass(q.class), NSStringFromCGRect(q.frame)];
+    }
+    [o writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-scroll.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+static void new_sv_ls(UIScrollView *self, SEL _cmd) {
+    orig_sv_ls(self, _cmd);
+    if (!gMotion || !gEnabled) return;
+    NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
+    if (!flag) {
+        CGSize c = self.contentSize, b = self.bounds.size;
+        BOOL is = b.height > 300 && c.height >= b.height * 1.5 && HasModuleContainer(self, 0);
+        flag = @(is);
+        objc_setAssociatedObject(self, kPageScrollKey, flag, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (is) DumpPageScroll(self);
+    }
+    if (!flag.boolValue) return;
+    CGFloat H = self.bounds.size.height, off = self.contentOffset.y;
+    for (UIView *p in self.subviews) {
+        if ([NSStringFromClass(p.class) hasPrefix:@"_UIScrollViewScrollIndicator"] || p.bounds.size.height < H * 0.5) continue;
+        CGFloat a = MIN(1.0, fabs((p.center.y - off - H * 0.5) / H));
+        p.layer.opacity = 1.0 - 0.6 * a;
+        p.layer.transform = a < 0.001 ? CATransform3DIdentity : CATransform3DMakeScale(1.0 - 0.07 * a, 1.0 - 0.07 * a, 1.0);
+    }
+}
+
 static void PrefsChanged(CFNotificationCenterRef center, void *observer, CFStringRef name,
                          const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -1458,6 +1503,7 @@ static void IOS26CCStyleInit(void) {
         InstallTouch_Round("CCUIRoundButton");
         InstallTouch_Slider("CCUIContinuousSliderView");
         InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
+        InstallHook("UIScrollView", @selector(layoutSubviews), (IMP)new_sv_ls, (IMP *)&orig_sv_ls);
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,
