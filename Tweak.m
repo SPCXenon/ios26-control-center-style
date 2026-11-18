@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.3.8
+// IOS26CCStyle 0.3.9
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -19,6 +19,7 @@ static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
 // MARK: - Preferences ---------------------------------------------------------
 
 static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion;
+static double  gPageK = 50.0, gPageFx = 60.0;       // page spring stiffness % of the main one, page effect %
 static double  gSpringK = 380.0, gSpringD = 26.0;   // iOS 27 animation spring (stiffness, damping)
 static BOOL    gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus;
 static CGFloat gMaxRadius;     // corner radius cap for modules (pt)
@@ -52,7 +53,7 @@ static double PrefDouble(NSString *key, double def, double lo, double hi) {
         }
         CFRelease(v);
     }
-    return MAX(lo, MIN(hi, out));
+    return round(MAX(lo, MIN(hi, out)) * 100.0) / 100.0;   // sliders store long fractions; keep two decimals
 }
 
 static BOOL PrefBool(NSString *key, BOOL def) {
@@ -112,6 +113,8 @@ static void LoadPrefs(void) {
     gMotion        = PrefBool(@"motion", YES);
     gSpringK       = PrefDouble(@"motionStiffness", 380.0, 50.0, 1000.0);
     gSpringD       = PrefDouble(@"motionDamping", 26.0, 2.0, 80.0);
+    gPageK         = PrefDouble(@"pageStiffness", 50.0, 10.0, 100.0);
+    gPageFx        = PrefDouble(@"pageEffect", 60.0, 0.0, 100.0);
     gMaxRadius     = (CGFloat)PrefDouble(@"maxRadius", 46.0, 16.0, 70.0);
     gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.9, 0.0, 1.0);
     gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.9, 0.3, 2.5);
@@ -1318,8 +1321,8 @@ static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
     if (![ok containsObject:kp] || !IsExpandContext(del)) return anim;
     CASpringAnimation *c = [anim copy];
     c.mass = 1.0;
-    c.stiffness = page ? gSpringK * 0.6 : gSpringK;
-    c.damping = page ? gSpringD * 0.8 : gSpringD;
+    c.stiffness = page ? gSpringK * gPageK / 100.0 : gSpringK;
+    c.damping = page ? 1.6 * sqrt(c.stiffness) : gSpringD;   // page: damping ratio 0.8
     c.duration = c.settlingDuration;
     return c;
 }
@@ -1463,8 +1466,9 @@ static void new_sv_ls(UIScrollView *self, SEL _cmd) {
         CGPoint m = [p.superview convertPoint:p.center toView:self];
         CGFloat d = vertical ? (m.y - self.contentOffset.y - span * 0.5) : (m.x - self.contentOffset.x - span * 0.5);
         CGFloat a = MIN(1.0, fabs(d / span));
-        p.layer.opacity = 1.0 - 0.6 * a;
-        p.layer.transform = a < 0.001 ? CATransform3DIdentity : CATransform3DMakeScale(1.0 - 0.07 * a, 1.0 - 0.07 * a, 1.0);
+        CGFloat fx = gPageFx / 100.0;
+        p.layer.opacity = 1.0 - 0.6 * fx * a;
+        p.layer.transform = a < 0.001 ? CATransform3DIdentity : CATransform3DMakeScale(1.0 - 0.07 * fx * a, 1.0 - 0.07 * fx * a, 1.0);
     }
 }
 

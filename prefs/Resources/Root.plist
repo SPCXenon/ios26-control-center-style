@@ -876,6 +876,62 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
+			<string>Lower = softer, slower page open and page scroll settle.</string>
+			<key>label</key>
+			<string>Page spring stiffness (% of Stiffness)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>50.0</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>pageStiffness</string>
+			<key>label</key>
+			<string>Page stiffness</string>
+			<key>max</key>
+			<real>100.0</real>
+			<key>min</key>
+			<real>10.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>How much a page shrinks and fades while scrolling away. 0 = off.</string>
+			<key>label</key>
+			<string>Page scroll effect (%)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>60.0</real>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>pageEffect</string>
+			<key>label</key>
+			<string>Page effect</string>
+			<key>max</key>
+			<real>100.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
 			<string>Extra blur adds one blur view per module and costs frame rate. Leave it off unless you need it.</string>
 			<key>label</key>
 			<string>Experimental</string>
