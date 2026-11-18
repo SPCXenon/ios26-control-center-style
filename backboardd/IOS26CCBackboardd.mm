@@ -512,7 +512,7 @@ struct Uniforms {
 
 // Disc blur of the refracted backdrop (the glass filter itself carries no radius: a radius pads the
 // captured source and shifts the rim).
-float4 glassSample(texture2d<float> src, sampler s, float2 uv, constant Uniforms &u)
+float4 glassSample(texture2d<float> src, sampler s, float2 uv, constant Uniforms &u, int taps, float rot)
 {
     float4 c = src.sample(s, uv);
     float r = u.blurPx;
@@ -520,9 +520,9 @@ float4 glassSample(texture2d<float> src, sampler s, float2 uv, constant Uniforms
     float2 texel = 1.0 / u.resolution;
     float4 acc = c;
     float wsum = 1.0;
-    for (int i = 0; i < 24; i++) {
-        float a = 2.39996 * float(i);
-        float rr = r * sqrt((float(i) + 0.5) / 24.0);
+    for (int i = 0; i < taps; i++) {
+        float a = 2.39996 * float(i) + rot;
+        float rr = r * sqrt((float(i) + 0.5) / float(taps));
         float4 t = src.sample(s, uv + float2(cos(a), sin(a)) * rr * texel);
         if (t.a < 0.01) continue;
         acc += t;
@@ -879,7 +879,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
     zoomMix = zoomMix * zoomMix * (3.0 - 2.0 * zoomMix);
     float2 greenUV = backdropSampleUV(capturePx, px, dispPx,
                                       isCoverSheet, u, zoomMix);
-    float4 greenSample = glassSample(src, s, greenUV, u);
+    float4 greenSample = glassSample(src, s, greenUV, u, 16, 0.0);
 
     float4 fallback = float4(0.0);
     bool loadedFallback = false;
@@ -901,7 +901,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             float2 uv = backdropSampleUV(capturePx, px,
                                           dispPx + aberrationPx * weight,
                                           isCoverSheet, u, zoomMix);
-            float4 sample = glassSample(src, s, uv, u);
+            float4 sample = glassSample(src, s, uv, u, 4, 1.7 * float(i));
             if (sample.a < 0.01) {
                 if (!loadedFallback) {
                     fallback = src.sample(s, captureUV);
@@ -919,7 +919,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             float2 uv = backdropSampleUV(capturePx, px,
                                           dispPx - aberrationPx * weight,
                                           isCoverSheet, u, zoomMix);
-            float4 sample = glassSample(src, s, uv, u);
+            float4 sample = glassSample(src, s, uv, u, 4, 0.9 + 1.7 * float(i));
             if (sample.a < 0.01) {
                 if (!loadedFallback) {
                     fallback = src.sample(s, captureUV);

@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.3.9
+// IOS26CCStyle 0.4.0
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -111,6 +111,7 @@ static void LoadPrefs(void) {
     gContinuous    = PrefBool(@"continuousCorners", YES);
     gExtraBlur     = PrefBool(@"extraBlur", NO);
     gMotion        = PrefBool(@"motion", YES);
+    gTouchGlow     = PrefBool(@"touchGlow", YES);
     gSpringK       = PrefDouble(@"motionStiffness", 380.0, 50.0, 1000.0);
     gSpringD       = PrefDouble(@"motionDamping", 26.0, 2.0, 80.0);
     gPageK         = PrefDouble(@"pageStiffness", 50.0, 10.0, 100.0);
@@ -1241,6 +1242,56 @@ static void MotionPress(UIView *v, double target, BOOL down) {
     }
 }
 
+static BOOL gTouchGlow = YES;
+
+// iOS 26 interactive glass: a soft light blooms under the finger and fades when it lifts.
+// It sits below the labels and the on-fill, inside a rounded clip.
+static void TouchGlow(UIView *v, NSSet *touches, BOOL down) {
+    if (!gMotion || !gEnabled || !gTouchGlow) return;
+    CALayer *clip = nil;
+    for (CALayer *l in v.layer.sublayers) if ([l.name isEqualToString:@"xc.touchglow"]) { clip = l; break; }
+    CGSize sz = v.bounds.size;
+    if (sz.width < 20 || sz.height < 20) return;
+    if (down) {
+        UITouch *t = touches.anyObject;
+        if (!t) return;
+        CGPoint p = [t locationInView:v];
+        if (!clip) {
+            clip = [CALayer layer];
+            clip.name = @"xc.touchglow";
+            clip.masksToBounds = YES;
+            clip.opacity = 0;
+            CAGradientLayer *g = [CAGradientLayer layer];
+            g.name = @"glow";
+            g.type = kCAGradientLayerRadial;
+            g.startPoint = CGPointMake(0.5, 0.5);
+            g.endPoint = CGPointMake(1.0, 1.0);
+            g.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:0.34].CGColor,
+                         (id)[UIColor colorWithWhite:1.0 alpha:0.12].CGColor,
+                         (id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
+            g.locations = @[@0.0, @0.45, @1.0];
+            [clip addSublayer:g];
+            [v.layer insertSublayer:clip atIndex:0];
+        }
+        clip.frame = v.bounds;
+        clip.cornerRadius = MIN(MIN(sz.width, sz.height) * 0.5, gMaxRadius);
+        CGFloat R = MAX(70.0, MIN(120.0, MAX(sz.width, sz.height) * 0.6));
+        for (CALayer *g in clip.sublayers) { g.bounds = CGRectMake(0, 0, R * 2, R * 2); g.position = p; }
+        [clip removeAnimationForKey:@"xc.glowout"];
+        clip.opacity = 1;
+        CABasicAnimation *in = [CABasicAnimation animationWithKeyPath:@"opacity"];
+        in.fromValue = @0; in.toValue = @1; in.duration = 0.12;
+        [clip addAnimation:in forKey:@"xc.glowin"];
+    } else if (clip) {
+        CABasicAnimation *out = [CABasicAnimation animationWithKeyPath:@"opacity"];
+        out.fromValue = @(clip.presentationLayer ? clip.presentationLayer.opacity : 1.0f);
+        out.toValue = @0; out.duration = 0.5;
+        out.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+        clip.opacity = 0;
+        [clip addAnimation:out forKey:@"xc.glowout"];
+    }
+}
+
 static const void *kWasOnKey = &kWasOnKey;
 
 // A toggle turning on pops: a quick overshoot spring, like the iOS 27 tiles.
@@ -1279,9 +1330,9 @@ static void TouchRefresh(UIView *v) {
     static void (*orig_tb_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_te_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_tc_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
-    static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, YES); } \
-    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchRefresh(self); }  \
-    static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); }  \
+    static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, YES); TouchGlow(self, t, YES); } \
+    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchGlow(self, nil, NO); TouchRefresh(self); }  \
+    static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchGlow(self, nil, NO); }  \
     static void InstallTouch_##TAG(const char *cls) {                                         \
         IMP o = NULL;                                                                         \
         if (InstallHook(cls, @selector(touchesBegan:withEvent:), (IMP)new_tb_##TAG, &o)) orig_tb_##TAG = (void (*)(UIView *, SEL, NSSet *, UIEvent *))o;     \
@@ -1307,6 +1358,15 @@ static BOOL IsExpandContext(UIView *v) {
     return NO;
 }
 
+// Control Center's open / close springs (scale and fade of every tile) live on views inside the
+// icon list folder, not in a module container.
+static BOOL IsPageContext(UIView *v) {
+    int n = 0;
+    for (UIView *a = v; a && n < 10; a = a.superview, n++)
+        if ([NSStringFromClass(a.class) containsString:@"IconListFolderView"]) return YES;
+    return NO;
+}
+
 static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
     if (!gMotion || !gEnabled || ![anim isKindOfClass:CASpringAnimation.class]) return anim;
     // page open / page scroll settles: stock runs these 0.55-1.6 s long; iOS 27 settles them quicker
@@ -1318,7 +1378,8 @@ static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
     NSString *kp = ((CAPropertyAnimation *)anim).keyPath;
     static NSSet *ok;
     if (!ok) ok = [NSSet setWithArray:@[@"position", @"bounds.size", @"bounds.origin", @"bounds", @"cornerRadius", @"transform"]];
-    if (![ok containsObject:kp] || !IsExpandContext(del)) return anim;
+    BOOL known = [ok containsObject:kp] || (page && [kp isEqualToString:@"opacity"]);
+    if (!known || !(IsExpandContext(del) || (page && IsPageContext(del)))) return anim;
     CASpringAnimation *c = [anim copy];
     c.mass = 1.0;
     c.stiffness = page ? gSpringK * gPageK / 100.0 : gSpringK;
@@ -1446,8 +1507,7 @@ static void CollectPages(UIView *v, int depth, NSMutableArray *out) {
     }
 }
 
-static void new_sv_ls(UIScrollView *self, SEL _cmd) {
-    orig_sv_ls(self, _cmd);
+static void ApplyPageScroll(UIScrollView *self) {
     if (!gMotion || !gEnabled) return;
     NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
     if (!flag) {
@@ -1462,14 +1522,26 @@ static void new_sv_ls(UIScrollView *self, SEL _cmd) {
     if (span < 100) return;
     NSMutableArray *pages = [NSMutableArray array];
     CollectPages(self, 0, pages);
+    CGFloat fx = gPageFx / 100.0;
     for (UIView *p in pages) {
         CGPoint m = [p.superview convertPoint:p.center toView:self];
         CGFloat d = vertical ? (m.y - self.contentOffset.y - span * 0.5) : (m.x - self.contentOffset.x - span * 0.5);
         CGFloat a = MIN(1.0, fabs(d / span));
-        CGFloat fx = gPageFx / 100.0;
         p.layer.opacity = 1.0 - 0.6 * fx * a;
         p.layer.transform = a < 0.001 ? CATransform3DIdentity : CATransform3DMakeScale(1.0 - 0.07 * fx * a, 1.0 - 0.07 * fx * a, 1.0);
     }
+}
+
+static void new_sv_ls(UIScrollView *self, SEL _cmd) {
+    orig_sv_ls(self, _cmd);
+    ApplyPageScroll(self);
+}
+
+// UIScrollView does not always relayout while it scrolls; the private scroll notification does fire.
+static void (*orig_sv_nds)(UIScrollView *, SEL);
+static void new_sv_nds(UIScrollView *self, SEL _cmd) {
+    orig_sv_nds(self, _cmd);
+    ApplyPageScroll(self);
 }
 
 static void PrefsChanged(CFNotificationCenterRef center, void *observer, CFStringRef name,
@@ -1511,6 +1583,7 @@ static void IOS26CCStyleInit(void) {
         InstallTouch_Slider("CCUIContinuousSliderView");
         InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
         InstallHook("UIScrollView", @selector(layoutSubviews), (IMP)new_sv_ls, (IMP *)&orig_sv_ls);
+        InstallHook("UIScrollView", NSSelectorFromString(@"_notifyDidScroll"), (IMP)new_sv_nds, (IMP *)&orig_sv_nds);
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,
