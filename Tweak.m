@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.1
+// IOS26CCStyle 0.4.2
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -1311,13 +1311,13 @@ static void TouchGlow(UIView *v, NSSet *touches, BOOL down) {
     CALayer *clip = GlowLayer(v);
     if (down) {
         if (!t || objc_getAssociatedObject(t, kTouchGlowKey)) return;
-        objc_setAssociatedObject(t, kTouchGlowKey, v, OBJC_ASSOCIATION_ASSIGN);
+        objc_setAssociatedObject(t, kTouchGlowKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         GlowShow(v, [t locationInView:v], below);
     } else if (clip && clip.opacity > 0) {
         GlowHide(clip);
     } else if (t && !objc_getAssociatedObject(t, kTouchGlowKey)) {
         // a quick tap whose touch-down this view never saw: flash the glow where the finger lifted
-        objc_setAssociatedObject(t, kTouchGlowKey, v, OBJC_ASSOCIATION_ASSIGN);
+        objc_setAssociatedObject(t, kTouchGlowKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         GlowShow(v, [t locationInView:v], below);
         GlowHide(GlowLayer(v));
     }
@@ -1325,12 +1325,39 @@ static void TouchGlow(UIView *v, NSSet *touches, BOOL down) {
 
 static const void *kWasOnKey = &kWasOnKey;
 
+// iOS 26: a soft band of light sweeps across a glass tile as it switches on.
+static void Shimmer(UIView *v) {
+    CGSize sz = v.bounds.size;
+    if (sz.width < 30 || sz.height < 30) return;
+    CAGradientLayer *g = [CAGradientLayer layer];
+    g.name = @"xc.shimmer";
+    g.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:0.5].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
+    g.locations = @[@0.0, @0.5, @1.0];
+    g.startPoint = CGPointMake(0.0, 0.35);
+    g.endPoint = CGPointMake(1.0, 0.65);
+    g.zPosition = 1001;
+    CGFloat w = sz.width * 0.55;
+    g.bounds = CGRectMake(0, 0, w, sz.height * 1.4);
+    g.position = CGPointMake(sz.width + w * 0.5, sz.height * 0.5);
+    [v.layer addSublayer:g];
+    CABasicAnimation *a = [CABasicAnimation animationWithKeyPath:@"position.x"];
+    a.fromValue = @(-w * 0.5);
+    a.toValue = @(sz.width + w * 0.5);
+    a.duration = 0.6;
+    a.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    [CATransaction begin];
+    [CATransaction setCompletionBlock:^{ [g removeFromSuperlayer]; }];
+    [g addAnimation:a forKey:@"xc.shimmer"];
+    [CATransaction commit];
+}
+
 // A toggle turning on pops: a quick overshoot spring, like the iOS 27 tiles.
 static void MotionToggle(UIView *v, BOOL on) {
     NSNumber *was = objc_getAssociatedObject(v, kWasOnKey);
     objc_setAssociatedObject(v, kWasOnKey, @(on), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (!gMotion || !gEnabled || !was || was.boolValue == on) return;
     [v.layer addAnimation:Spring(@"transform.scale", on ? 0.9 : 1.06, 1.0, 8, 240) forKey:@"xc.pop"];
+    if (on && gTouchGlow) Shimmer(v);
 }
 
 
