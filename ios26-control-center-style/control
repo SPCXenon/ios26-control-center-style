@@ -1,0 +1,9 @@
+Package: com.xenon.ios26ccstyle
+Name: iOS 26 Control Center Style
+Version: 0.4.3
+Architecture: iphoneos-arm64
+Description: Liquid Glass look for the iOS 18 Control Center: capsule corners, specular rim, inner glass glow and a Settings page.
+Maintainer: SPCXenon
+Author: SPCXenon
+Section: Tweaks
+Depends: firmware (>= 18.0), ellekit, preferenceloader
