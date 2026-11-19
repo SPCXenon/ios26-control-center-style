@@ -1680,11 +1680,9 @@ static void CollectPages(UIView *v, int depth, NSMutableArray *out) {
     }
 }
 
-static const void *kPageVelKey = &kPageVelKey;
 static const void *kPageGenKey = &kPageGenKey;
 
-// Pages away from the centre shrink and fade (about 0.9 at half a page). A fast flick also squeezes
-// every page, up to about 0.73, and the squeeze springs back once the scroll settles.
+// Pages subtly shrink and fade as they move away from the centre of the scroll view.
 static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     if (!gMotion || !gEnabled) return;
     NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
@@ -1694,65 +1692,87 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
         if (flag.boolValue) DumpPageScroll(self);
     }
     if (!flag.boolValue) return;
+
     CGSize c = self.contentSize, b = self.bounds.size;
     BOOL vertical = c.height > b.height * 1.2;
     CGFloat span = vertical ? b.height : b.width;
     if (span < 100) return;
+
     NSMutableArray *pages = [NSMutableArray array];
     CollectPages(self, 0, pages);
     CGFloat fx = gPageFx / 100.0;
-    CGFloat off = vertical ? self.contentOffset.y : self.contentOffset.x;
-    CFTimeInterval now = CACurrentMediaTime();
-    NSArray *last = objc_getAssociatedObject(self, kPageVelKey);
-    CGFloat vel = (settle || last.count != 3) ? 0 : [last[2] doubleValue];
-    if (settle || last.count != 3) {
-        objc_setAssociatedObject(self, kPageVelKey, @[@(off), @(now), @0], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    } else {
-        CFTimeInterval dt = now - [last[1] doubleValue];
-        if (dt > 0.004) {
-            vel = dt < 0.25 ? 0.6 * vel + 0.4 * fabs(off - [last[0] doubleValue]) / dt : 0;
-            objc_setAssociatedObject(self, kPageVelKey, @[@(off), @(now), @(vel)], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-    }
-    CGFloat squeeze = MIN(1.0, vel / 5000.0) * 0.45 * fx;
+
     for (UIView *p in pages) {
         CGPoint m = [p.superview convertPoint:p.center toView:self];
         CGFloat d = vertical ? (m.y - self.contentOffset.y - span * 0.5) : (m.x - self.contentOffset.x - span * 0.5);
         CGFloat a = MIN(1.0, fabs(d / span));
-        CGFloat shrink = MAX(0.2 * fx * a, squeeze);
+
+        // Subtle scale and fade based purely on distance from the centre.
+        // The velocity-based squeeze is intentionally removed to avoid violent squashing.
+        CGFloat targetScale = 1.0 - (0.05 * fx * a);
+        CGFloat targetOpacity = 1.0 - (0.3 * fx * a);
+
         NSNumber *on = objc_getAssociatedObject(p, kPageFxKey);
-        if (shrink > 0.002 || a > 0.001) {
-            CGFloat op = 1.0 - 0.9 * fx * a, sc = 1.0 - shrink;
+
+        if (!settle) {
+            // Active scrolling: update instantly to track the finger/scroll offset.
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            if (fabs(p.layer.transform.m11 - targetScale) > 0.002) {
+                p.layer.transform = CATransform3DMakeScale(targetScale, targetScale, 1.0);
+            }
+            if (fabs(p.layer.opacity - targetOpacity) > 0.004) {
+                p.layer.opacity = targetOpacity;
+            }
+            [CATransaction commit];
+
             if (!on) {
-                p.layer.allowsGroupOpacity = NO;   // fade each tile on its own: no offscreen pass over the glass
+                p.layer.allowsGroupOpacity = NO;
                 objc_setAssociatedObject(p, kPageFxKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             }
-            if (fabs(p.layer.opacity - op) > 0.004) p.layer.opacity = op;
-            if (fabs(p.layer.transform.m11 - sc) > 0.002) {
-                CALayer *pl = p.layer.presentationLayer ?: p.layer;
-                CGFloat from = pl.transform.m11;
-                p.layer.transform = CATransform3DMakeScale(sc, sc, 1.0);
-                if (settle) [p.layer addAnimation:Spring(@"transform.scale", from, sc, 16, 180) forKey:@"xc.relax"];
-            }
-        } else if (on) {
+        } else {
+            // Settle: apply a smooth spring to the final state.
             CALayer *pl = p.layer.presentationLayer ?: p.layer;
-            CGFloat from = pl.transform.m11;
-            p.layer.opacity = 1.0;
-            p.layer.transform = CATransform3DIdentity;
-            objc_setAssociatedObject(p, kPageFxKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            if (settle && fabs(from - 1.0) > 0.002) [p.layer addAnimation:Spring(@"transform.scale", from, 1.0, 16, 180) forKey:@"xc.relax"];
+            CGFloat fromScale = pl.transform.m11;
+            CGFloat fromOpacity = pl.opacity;
+
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            p.layer.transform = CATransform3DMakeScale(targetScale, targetScale, 1.0);
+            p.layer.opacity = targetOpacity;
+            [CATransaction commit];
+
+            if (fabs(fromScale - targetScale) > 0.005) {
+                // Critically damped spring for a clean snap without bounce.
+                CASpringAnimation *spring = Spring(@"transform.scale", fromScale, targetScale, 26.0, 180.0);
+                [p.layer addAnimation:spring forKey:@"xc.relax"];
+            }
+            if (fabs(fromOpacity - targetOpacity) > 0.01) {
+                CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
+                fade.fromValue = @(fromOpacity);
+                fade.toValue = @(targetOpacity);
+                fade.duration = 0.25;
+                fade.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+                [p.layer addAnimation:fade forKey:@"xc.fade"];
+            }
+
+            if (on) {
+                objc_setAssociatedObject(p, kPageFxKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
         }
     }
+
+    // Debounce the settle phase so it runs after scrolling/deceleration has stopped.
     if (!settle) {
         NSUInteger gen = [objc_getAssociatedObject(self, kPageGenKey) unsignedIntegerValue] + 1;
         objc_setAssociatedObject(self, kPageGenKey, @(gen), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        if (squeeze > 0.002) {
-            __weak UIScrollView *ws = self;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.07 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                UIScrollView *sv = ws;
-                if (sv && [objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) ApplyPageScrollTo(sv, YES);
-            });
-        }
+        __weak UIScrollView *ws = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIScrollView *sv = ws;
+            if (sv && [objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) {
+                ApplyPageScrollTo(sv, YES);
+            }
+        });
     }
 }
 
