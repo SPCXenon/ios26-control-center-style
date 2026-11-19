@@ -539,9 +539,9 @@ float4 glassSample(texture2d<float> src, sampler s, float2 uv, constant Uniforms
         wsum += 1.0;
     }
     float4 o = acc / wsum;
-    // frosted glass is less colourful than the page behind it
+    // iOS 27 glass is vivid: the colour of the page behind it comes through a little stronger
     float lum = dot(o.rgb, float3(0.2126, 0.7152, 0.0722));
-    o.rgb = mix(float3(lum), o.rgb, 0.72);
+    o.rgb = saturate(mix(float3(lum), o.rgb, 1.15));
     return o;
 }
 
@@ -1392,14 +1392,14 @@ static void lgStartPrefsObserver(void) {
 
 // Glass blur radius (points) from the tweak's preferences, re-read at most every 1.5 s.
 static float lgGlassBlurPoints(void) {
-    static float v = 20.0f;
+    static float v = 14.0f;
     static CFAbsoluteTime last = 0;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     if (now - last > 1.5) {
         last = now;
         NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.xenon.ios26ccstyle.plist"];
         id n = d[@"glassBlurRadius"];
-        v = [n isKindOfClass:NSNumber.class] ? fminf(40.0f, fmaxf(0.0f, roundf([n floatValue] * 100.0f) / 100.0f)) : 20.0f;
+        v = [n isKindOfClass:NSNumber.class] ? fminf(40.0f, fmaxf(0.0f, roundf([n floatValue] * 100.0f) / 100.0f)) : 14.0f;
     }
     return v;
 }

@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.2
+// IOS26CCStyle 0.4.3
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -833,7 +833,7 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
             g.glassRadius = radius;
             g.glassDark = dark;
             // base tint on the glass itself (the stock background view is alpha 0)
-            g.backgroundColor = [UIColor colorWithWhite:dark ? 0.08 : 1.0 alpha:dark ? 0.06 + 0.16 * gGlass : 0.03 + 0.08 * gGlass];
+            g.backgroundColor = [UIColor colorWithWhite:dark ? 0.55 : 1.0 alpha:dark ? 0.05 + 0.10 * gGlass : 0.03 + 0.08 * gGlass];
             [g attachFilter];
             if (!s.hidden) s.hidden = YES;
             continue;
@@ -900,6 +900,8 @@ static UILabel *FirstLabel(UIView *v, int depth) {
 static const void *kSynthFillKey = &kSynthFillKey;   // our own fill view, for tiles with no system fill
 
 // Returns the number of system on-fills that were restyled.
+static CGFloat OnFillAlpha(BOOL dark) { return (dark ? 0.96 : 0.98) - 0.06 * gGlass; }
+
 static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
     if (depth > 4) return 0;
     int n = 0;
@@ -919,7 +921,7 @@ static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
             s.layer.cornerRadius = radius;
             s.layer.masksToBounds = YES;
             // iOS 26+ "on" tiles are bright, slightly translucent white glass.
-            CGFloat fa = (dark ? 0.94 : 0.97) - 0.10 * gGlass;
+            CGFloat fa = OnFillAlpha(dark);
             CGFloat w = 0, ca = 0;
             if (!(s.backgroundColor && [s.backgroundColor getWhite:&w alpha:&ca] && fabs(ca - fa) < 0.005 && w > 0.99)) {
                 s.backgroundColor = [UIColor colorWithWhite:1.0 alpha:fa];
@@ -967,7 +969,7 @@ static void SyncSynthFill(UIView *v, CGFloat radius, BOOL dark, BOOL systemFillV
     fill.layer.cornerCurve = gContinuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
     fill.layer.cornerRadius = radius;
     fill.layer.masksToBounds = YES;
-    fill.backgroundColor = [UIColor colorWithWhite:1.0 alpha:(dark ? 0.94 : 0.97) - 0.10 * gGlass];
+    fill.backgroundColor = [UIColor colorWithWhite:1.0 alpha:OnFillAlpha(dark)];
 }
 
 // Debug dump of the view hierarchy of each module / round button, once per object.
@@ -1243,11 +1245,19 @@ static void MotionPress(UIView *v, double target, BOOL down) {
 }
 
 
-// iOS 26 interactive glass: a soft light blooms under the finger and fades when it lifts. Tiles get it
-// above their fill (a light bloom on dark glass, a soft shade on a white fill); sliders keep it below
-// their content. One glow per touch: the first view that sees the touch owns it.
-static BOOL OnFillVisible(UIView *v, int depth);
+// iOS 26 interactive glass: a soft white light blooms under the finger and stays while the finger is
+// down (a hold included), then fades. Touches are followed at the window, before gesture recognisers
+// can cancel them, so a hold keeps its glow after the module starts to expand. Tiles get it above
+// their fill; sliders keep it below their content and the light follows the finger.
 static const void *kTouchGlowKey = &kTouchGlowKey;
+
+@interface XCWeakView : NSObject
+@property (nonatomic, weak) UIView *view;
+@property (nonatomic) CGPoint start;
+@property (nonatomic) BOOL slider, gone;
+@end
+@implementation XCWeakView
+@end
 
 static CALayer *GlowLayer(UIView *v) {
     for (CALayer *l in v.layer.sublayers) if ([l.name isEqualToString:@"xc.touchglow"]) return l;
@@ -1256,6 +1266,7 @@ static CALayer *GlowLayer(UIView *v) {
 
 static void GlowShow(UIView *v, CGPoint p, BOOL below) {
     CGSize sz = v.bounds.size;
+    if (sz.width < 20 || sz.height < 20) return;
     CALayer *clip = GlowLayer(v);
     if (!clip) {
         clip = [CALayer layer];
@@ -1271,24 +1282,30 @@ static void GlowShow(UIView *v, CGPoint p, BOOL below) {
         [clip addSublayer:g];
         if (below) [v.layer insertSublayer:clip atIndex:0]; else [v.layer addSublayer:clip];
     }
-    BOOL on = !below && OnFillVisible(v, 0);
-    CGFloat k = on ? 0.0 : 1.0, a0 = on ? 0.16 : (below ? 0.34 : 0.42), a1 = on ? 0.07 : (below ? 0.12 : 0.17);
+    CGFloat a0 = below ? 0.34 : 0.42, a1 = below ? 0.12 : 0.17;
     CGFloat rad = v.layer.cornerRadius > 0 ? v.layer.cornerRadius : MIN(MIN(sz.width, sz.height) * 0.5, gMaxRadius);
+    CGFloat R = MAX(80.0, MIN(140.0, MAX(sz.width, sz.height) * 0.75));
+    CAGradientLayer *g = (CAGradientLayer *)clip.sublayers.firstObject;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     clip.frame = v.bounds;
     clip.cornerRadius = MIN(rad, MIN(sz.width, sz.height) * 0.5);
     clip.cornerCurve = kCACornerCurveContinuous;
-    CGFloat R = MAX(80.0, MIN(140.0, MAX(sz.width, sz.height) * 0.75));
-    CAGradientLayer *g = (CAGradientLayer *)clip.sublayers.firstObject;
-    g.colors = @[(id)[UIColor colorWithWhite:k alpha:a0].CGColor, (id)[UIColor colorWithWhite:k alpha:a1].CGColor, (id)[UIColor colorWithWhite:k alpha:0.0].CGColor];
+    g.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:a0].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:a1].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
     g.bounds = CGRectMake(0, 0, R * 2, R * 2);
     g.position = p;
+    g.transform = CATransform3DMakeScale(1.3, 1.3, 1.0);
     [clip removeAnimationForKey:@"xc.glowout"];
     clip.opacity = 1;
+    [CATransaction commit];
     CABasicAnimation *in = [CABasicAnimation animationWithKeyPath:@"opacity"];
     in.fromValue = @0; in.toValue = @1; in.duration = 0.08;
     [clip addAnimation:in forKey:@"xc.glowin"];
-    CABasicAnimation *bloom = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
-    bloom.fromValue = @0.55; bloom.toValue = @1.0; bloom.duration = 0.28;
+    // blooms out under the finger, then keeps swelling slowly while it is held
+    CAKeyframeAnimation *bloom = [CAKeyframeAnimation animationWithKeyPath:@"transform.scale"];
+    bloom.values = @[@0.55, @1.0, @1.3];
+    bloom.keyTimes = @[@0.0, @0.25, @1.0];
+    bloom.duration = 1.0;
     bloom.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
     [g addAnimation:bloom forKey:@"xc.bloom"];
 }
@@ -1298,56 +1315,113 @@ static void GlowHide(CALayer *clip) {
     out.fromValue = @(clip.presentationLayer ? clip.presentationLayer.opacity : 1.0f);
     out.toValue = @0; out.duration = 0.55;
     out.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     clip.opacity = 0;
+    [CATransaction commit];
     [clip addAnimation:out forKey:@"xc.glowout"];
 }
 
-static void TouchGlow(UIView *v, NSSet *touches, BOOL down) {
-    if (!gMotion || !gEnabled || !gTouchGlow) return;
-    CGSize sz = v.bounds.size;
-    if (sz.width < 20 || sz.height < 20) return;
-    UITouch *t = touches.anyObject;
-    BOOL below = [NSStringFromClass(v.class) isEqualToString:@"CCUIContinuousSliderView"];
-    CALayer *clip = GlowLayer(v);
-    if (down) {
-        if (!t || objc_getAssociatedObject(t, kTouchGlowKey)) return;
-        objc_setAssociatedObject(t, kTouchGlowKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        GlowShow(v, [t locationInView:v], below);
-    } else if (clip && clip.opacity > 0) {
-        GlowHide(clip);
-    } else if (t && !objc_getAssociatedObject(t, kTouchGlowKey)) {
-        // a quick tap whose touch-down this view never saw: flash the glow where the finger lifted
-        objc_setAssociatedObject(t, kTouchGlowKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        GlowShow(v, [t locationInView:v], below);
-        GlowHide(GlowLayer(v));
+static void GlowTrack(UIEvent *e, UIWindow *w) {
+    for (UITouch *t in [e touchesForWindow:w]) {
+        UITouchPhase ph = t.phase;
+        if (ph == UITouchPhaseBegan) {
+            UIView *target = nil;
+            int n = 0;
+            for (UIView *a = t.view; a && n < 8; a = a.superview, n++) {
+                NSString *c = NSStringFromClass(a.class);
+                if ([c isEqualToString:@"CCUIControlTemplateView"] || [c isEqualToString:@"CCUIRoundButton"] ||
+                    [c isEqualToString:@"CCUIContinuousSliderView"] || [c isEqualToString:@"CCUIButtonModuleView"]) { target = a; break; }
+            }
+            if (!target) continue;
+            XCWeakView *ref = [XCWeakView new];
+            ref.view = target;
+            ref.slider = [NSStringFromClass(target.class) isEqualToString:@"CCUIContinuousSliderView"];
+            ref.start = [t locationInView:target];
+            objc_setAssociatedObject(t, kTouchGlowKey, ref, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            GlowShow(target, ref.start, ref.slider);
+            continue;
+        }
+        XCWeakView *ref = objc_getAssociatedObject(t, kTouchGlowKey);
+        UIView *v = ref.view;
+        if (!ref || !v) continue;
+        CALayer *clip = GlowLayer(v);
+        if (ph == UITouchPhaseMoved) {
+            CGPoint p = [t locationInView:v];
+            if (ref.slider) {
+                CALayer *g = clip.sublayers.firstObject;
+                [CATransaction begin];
+                [CATransaction setDisableActions:YES];
+                g.position = p;
+                [CATransaction commit];
+            } else if (!ref.gone && hypot(p.x - ref.start.x, p.y - ref.start.y) > 14.0) {
+                ref.gone = YES;   // the finger is scrolling the page, not pressing the tile
+                if (clip && clip.opacity > 0) GlowHide(clip);
+            }
+        } else if (ph == UITouchPhaseEnded || ph == UITouchPhaseCancelled) {
+            objc_setAssociatedObject(t, kTouchGlowKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            if (!ref.gone && clip && clip.opacity > 0) GlowHide(clip);
+        }
     }
+}
+
+static void (*orig_win_se)(UIWindow *, SEL, UIEvent *);
+static void new_win_se(UIWindow *self, SEL _cmd, UIEvent *e) {
+    if (gMotion && gEnabled && gTouchGlow && e.type == UIEventTypeTouches) GlowTrack(e, self);
+    orig_win_se(self, _cmd, e);
 }
 
 static const void *kWasOnKey = &kWasOnKey;
 
-// iOS 26: a soft band of light sweeps across a glass tile as it switches on.
-static void Shimmer(UIView *v) {
+// iOS 27: a tile that switches on gives off a brief halo of light that spills past its edge. The
+// halo lives at the window, above the clipped tile, and is one cached image.
+static UIImage *BloomImage(CGSize sz, CGFloat radius, CGFloat pad) {
+    static NSCache *cache;
+    if (!cache) cache = [NSCache new];
+    NSString *key = [NSString stringWithFormat:@"%.0f|%.0f|%.0f", sz.width, sz.height, radius];
+    UIImage *img = [cache objectForKey:key];
+    if (img) return img;
+    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat preferredFormat];
+    fmt.opaque = NO;
+    CGSize S = CGSizeMake(sz.width + 2 * pad, sz.height + 2 * pad);
+    img = [[[UIGraphicsImageRenderer alloc] initWithSize:S format:fmt] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        CGRect r = CGRectMake(pad, pad, sz.width, sz.height);
+        [[UIColor colorWithWhite:1.0 alpha:0.045] setFill];
+        for (int i = 14; i >= 1; i--) {
+            CGFloat g = pad * i / 14.0;
+            [[UIBezierPath bezierPathWithRoundedRect:CGRectInset(r, -g, -g) cornerRadius:radius + g] fill];
+        }
+    }];
+    [cache setObject:img forKey:key];
+    return img;
+}
+
+static void Bloom(UIView *v) {
+    UIWindow *w = v.window;
     CGSize sz = v.bounds.size;
-    if (sz.width < 30 || sz.height < 30) return;
-    CAGradientLayer *g = [CAGradientLayer layer];
-    g.name = @"xc.shimmer";
-    g.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:0.5].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
-    g.locations = @[@0.0, @0.5, @1.0];
-    g.startPoint = CGPointMake(0.0, 0.35);
-    g.endPoint = CGPointMake(1.0, 0.65);
-    g.zPosition = 1001;
-    CGFloat w = sz.width * 0.55;
-    g.bounds = CGRectMake(0, 0, w, sz.height * 1.4);
-    g.position = CGPointMake(sz.width + w * 0.5, sz.height * 0.5);
-    [v.layer addSublayer:g];
-    CABasicAnimation *a = [CABasicAnimation animationWithKeyPath:@"position.x"];
-    a.fromValue = @(-w * 0.5);
-    a.toValue = @(sz.width + w * 0.5);
-    a.duration = 0.6;
-    a.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    if (!w || sz.width < 30 || sz.height < 30) return;
+    CGFloat pad = 24.0;
+    CGFloat rad = MIN(v.layer.cornerRadius > 0 ? v.layer.cornerRadius : sz.height * 0.5, MIN(sz.width, sz.height) * 0.5);
+    CALayer *g = [CALayer layer];
+    g.name = @"xc.bloomhalo";
+    g.contents = (id)BloomImage(sz, rad, pad).CGImage;
+    g.contentsScale = UIScreen.mainScreen.scale;
+    g.frame = CGRectInset([v convertRect:v.bounds toView:w], -pad, -pad);
+    g.zPosition = 10000;
+    g.opacity = 0;
+    [w.layer addSublayer:g];
+    CAKeyframeAnimation *o = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    o.values = @[@0.0, @1.0, @0.0];
+    o.keyTimes = @[@0.0, @0.22, @1.0];
+    CABasicAnimation *sc = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+    sc.fromValue = @0.96; sc.toValue = @1.1;
+    sc.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    CAAnimationGroup *grp = [CAAnimationGroup animation];
+    grp.animations = @[o, sc];
+    grp.duration = 0.7;
     [CATransaction begin];
     [CATransaction setCompletionBlock:^{ [g removeFromSuperlayer]; }];
-    [g addAnimation:a forKey:@"xc.shimmer"];
+    [g addAnimation:grp forKey:@"xc.bloomhalo"];
     [CATransaction commit];
 }
 
@@ -1357,7 +1431,7 @@ static void MotionToggle(UIView *v, BOOL on) {
     objc_setAssociatedObject(v, kWasOnKey, @(on), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (!gMotion || !gEnabled || !was || was.boolValue == on) return;
     [v.layer addAnimation:Spring(@"transform.scale", on ? 0.9 : 1.06, 1.0, 8, 240) forKey:@"xc.pop"];
-    if (on && gTouchGlow) Shimmer(v);
+    if (on && gTouchGlow) Bloom(v);
 }
 
 
@@ -1388,9 +1462,9 @@ static void TouchRefresh(UIView *v) {
     static void (*orig_tb_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_te_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_tc_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
-    static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, YES); TouchGlow(self, t, YES); } \
-    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchGlow(self, t, NO); TouchRefresh(self); }  \
-    static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchGlow(self, t, NO); }  \
+    static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, YES); } \
+    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchRefresh(self); }  \
+    static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); }  \
     static void InstallTouch_##TAG(const char *cls) {                                         \
         IMP o = NULL;                                                                         \
         if (InstallHook(cls, @selector(touchesBegan:withEvent:), (IMP)new_tb_##TAG, &o)) orig_tb_##TAG = (void (*)(UIView *, SEL, NSSet *, UIEvent *))o;     \
@@ -1427,13 +1501,47 @@ static BOOL IsPageContext(UIView *v) {
     return NO;
 }
 
+// The full-screen dim / blur behind Control Center, and behind an expanded module, fades on a very
+// short spring, so it is gone while the tiles are still fading out.
+static BOOL IsCCBackdrop(UIView *v) {
+    UIWindow *w = v.window;
+    if (!w) return NO;
+    CGSize ws = w.bounds.size, s = v.bounds.size;
+    if (s.width < ws.width * 0.9 || s.height < ws.height * 0.9) return NO;
+    NSString *n = NSStringFromClass(v.class);
+    if ([n containsString:@"IconList"] || [n containsString:@"ScrollView"]) return NO;
+    BOOL bg = [n containsString:@"Material"] || [n containsString:@"Backdrop"] || [n containsString:@"Blur"] ||
+              [n containsString:@"Background"] || [n isEqualToString:@"UIVisualEffectView"];
+    if (!bg) return NO;
+    int d = 0;
+    for (UIView *a = v; a && d < 8; a = a.superview, d++) if ([NSStringFromClass(a.class) hasPrefix:@"CCUI"]) return YES;
+    return [NSStringFromClass(w.class) containsString:@"ControlCenter"];
+}
+
 static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
-    if (!gMotion || !gEnabled || ![anim isKindOfClass:CASpringAnimation.class]) return anim;
+    if (!gMotion || !gEnabled) return anim;
+    BOOL spring = [anim isKindOfClass:CASpringAnimation.class];
+    if (!spring && ![anim isKindOfClass:CABasicAnimation.class]) return anim;
+    NSString *kp = ((CAPropertyAnimation *)anim).keyPath;
+    if (([kp isEqualToString:@"opacity"] || [kp hasPrefix:@"filters."]) && anim.duration <= 0.6) {
+        id bd = layer.delegate;
+        if ([bd isKindOfClass:UIView.class] && IsCCBackdrop(bd)) {
+            CAAnimation *c = [anim copy];
+            if (spring) {
+                CASpringAnimation *sa = (CASpringAnimation *)c;
+                sa.mass = 1.0; sa.stiffness = 150.0; sa.damping = 24.5;   // critically damped, ~0.4 s
+                sa.duration = sa.settlingDuration;
+            } else {
+                c.duration = 0.4;
+            }
+            return c;
+        }
+    }
+    if (!spring) return anim;
     BOOL page = anim.duration > 0.55 && anim.duration <= 1.6;
     if (!page && (anim.duration < 0.3 || anim.duration > 0.55)) return anim;
     id del = layer.delegate;
     if (![del isKindOfClass:UIView.class]) return anim;
-    NSString *kp = ((CAPropertyAnimation *)anim).keyPath;
     if (page) {
         // open / close: the stock curve, played faster (stock settles over 1-1.5 s)
         if (!([kp isEqualToString:@"transform"] || [kp isEqualToString:@"opacity"] || [kp isEqualToString:@"position"]) || !IsPageContext(del)) return anim;
@@ -1572,7 +1680,12 @@ static void CollectPages(UIView *v, int depth, NSMutableArray *out) {
     }
 }
 
-static void ApplyPageScroll(UIScrollView *self) {
+static const void *kPageVelKey = &kPageVelKey;
+static const void *kPageGenKey = &kPageGenKey;
+
+// Pages away from the centre shrink and fade (about 0.9 at half a page). A fast flick also squeezes
+// every page, up to about 0.73, and the squeeze springs back once the scroll settles.
+static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     if (!gMotion || !gEnabled) return;
     NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
     if (!flag) {
@@ -1588,26 +1701,62 @@ static void ApplyPageScroll(UIScrollView *self) {
     NSMutableArray *pages = [NSMutableArray array];
     CollectPages(self, 0, pages);
     CGFloat fx = gPageFx / 100.0;
+    CGFloat off = vertical ? self.contentOffset.y : self.contentOffset.x;
+    CFTimeInterval now = CACurrentMediaTime();
+    NSArray *last = objc_getAssociatedObject(self, kPageVelKey);
+    CGFloat vel = (settle || last.count != 3) ? 0 : [last[2] doubleValue];
+    if (settle || last.count != 3) {
+        objc_setAssociatedObject(self, kPageVelKey, @[@(off), @(now), @0], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    } else {
+        CFTimeInterval dt = now - [last[1] doubleValue];
+        if (dt > 0.004) {
+            vel = dt < 0.25 ? 0.6 * vel + 0.4 * fabs(off - [last[0] doubleValue]) / dt : 0;
+            objc_setAssociatedObject(self, kPageVelKey, @[@(off), @(now), @(vel)], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
+    CGFloat squeeze = MIN(1.0, vel / 5000.0) * 0.45 * fx;
     for (UIView *p in pages) {
         CGPoint m = [p.superview convertPoint:p.center toView:self];
         CGFloat d = vertical ? (m.y - self.contentOffset.y - span * 0.5) : (m.x - self.contentOffset.x - span * 0.5);
         CGFloat a = MIN(1.0, fabs(d / span));
+        CGFloat shrink = MAX(0.2 * fx * a, squeeze);
         NSNumber *on = objc_getAssociatedObject(p, kPageFxKey);
-        if (a > 0.001) {
-            CGFloat op = 1.0 - 0.6 * fx * a, sc = 1.0 - 0.07 * fx * a;
+        if (shrink > 0.002 || a > 0.001) {
+            CGFloat op = 1.0 - 0.9 * fx * a, sc = 1.0 - shrink;
             if (!on) {
                 p.layer.allowsGroupOpacity = NO;   // fade each tile on its own: no offscreen pass over the glass
                 objc_setAssociatedObject(p, kPageFxKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             }
             if (fabs(p.layer.opacity - op) > 0.004) p.layer.opacity = op;
-            if (fabs(p.layer.transform.m11 - sc) > 0.002) p.layer.transform = CATransform3DMakeScale(sc, sc, 1.0);
+            if (fabs(p.layer.transform.m11 - sc) > 0.002) {
+                CALayer *pl = p.layer.presentationLayer ?: p.layer;
+                CGFloat from = pl.transform.m11;
+                p.layer.transform = CATransform3DMakeScale(sc, sc, 1.0);
+                if (settle) [p.layer addAnimation:Spring(@"transform.scale", from, sc, 16, 180) forKey:@"xc.relax"];
+            }
         } else if (on) {
+            CALayer *pl = p.layer.presentationLayer ?: p.layer;
+            CGFloat from = pl.transform.m11;
             p.layer.opacity = 1.0;
             p.layer.transform = CATransform3DIdentity;
             objc_setAssociatedObject(p, kPageFxKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            if (settle && fabs(from - 1.0) > 0.002) [p.layer addAnimation:Spring(@"transform.scale", from, 1.0, 16, 180) forKey:@"xc.relax"];
+        }
+    }
+    if (!settle) {
+        NSUInteger gen = [objc_getAssociatedObject(self, kPageGenKey) unsignedIntegerValue] + 1;
+        objc_setAssociatedObject(self, kPageGenKey, @(gen), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (squeeze > 0.002) {
+            __weak UIScrollView *ws = self;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.07 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                UIScrollView *sv = ws;
+                if (sv && [objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) ApplyPageScrollTo(sv, YES);
+            });
         }
     }
 }
+
+static void ApplyPageScroll(UIScrollView *self) { ApplyPageScrollTo(self, NO); }
 
 static void new_sv_ls(UIScrollView *self, SEL _cmd) {
     orig_sv_ls(self, _cmd);
@@ -1661,6 +1810,7 @@ static void IOS26CCStyleInit(void) {
         InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
         InstallHook("UIScrollView", @selector(layoutSubviews), (IMP)new_sv_ls, (IMP *)&orig_sv_ls);
         InstallHook("UIScrollView", NSSelectorFromString(@"_notifyDidScroll"), (IMP)new_sv_nds, (IMP *)&orig_sv_nds);
+        InstallHook("UIWindow", @selector(sendEvent:), (IMP)new_win_se, (IMP *)&orig_win_se);
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,

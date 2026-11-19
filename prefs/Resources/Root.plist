@@ -594,7 +594,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>20.0</real>
+			<integer>14</integer>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
