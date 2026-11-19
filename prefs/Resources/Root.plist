@@ -890,9 +890,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Lower = softer, slower page open and page scroll settle.</string>
+			<string>Multiplier on the stock Control Center open and close timing. 1 = stock, higher = faster.</string>
 			<key>label</key>
-			<string>Page spring stiffness (% of Stiffness)</string>
+			<string>Open / close speed (x)</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -900,17 +900,17 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>50.0</real>
+			<real>1.8</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
-			<string>pageStiffness</string>
+			<string>pageSpeed</string>
 			<key>label</key>
-			<string>Page stiffness</string>
+			<string>Speed</string>
 			<key>max</key>
-			<real>100.0</real>
+			<real>3.0</real>
 			<key>min</key>
-			<real>10.0</real>
+			<real>0.5</real>
 			<key>showValue</key>
 			<true/>
 		</dict>

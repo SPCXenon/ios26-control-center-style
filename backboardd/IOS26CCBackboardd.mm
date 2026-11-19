@@ -517,13 +517,23 @@ float4 glassSample(texture2d<float> src, sampler s, float2 uv, constant Uniforms
     float4 c = src.sample(s, uv);
     float r = u.blurPx;
     if (r < 0.5 || c.a < 0.01) return c;
+    // golden-angle disc, precomputed; turned per pixel so the few taps turn into fine noise, not bands
+    constexpr float2 kDisc[12] = {
+        float2(0.2041, 0.0000), float2(-0.2607, 0.2388), float2(0.0399, -0.4547),
+        float2(0.3286, 0.4286), float2(-0.6030, -0.1067), float2(0.5712, -0.3634),
+        float2(-0.1911, 0.7107), float2(-0.3644, -0.7016), float2(0.7906, 0.2887),
+        float2(-0.8224, 0.3395), float2(0.3965, -0.8472), float2(0.2930, 0.9341)
+    };
+    float ign = fract(52.9829189 * fract(dot(uv * u.resolution, float2(0.06711056, 0.00583715))));
+    float ang = rot + 6.2831853 * ign;
+    float2 cs = float2(cos(ang), sin(ang));
     float2 texel = 1.0 / u.resolution;
     float4 acc = c;
     float wsum = 1.0;
-    for (int i = 0; i < taps; i++) {
-        float a = 2.39996 * float(i) + rot;
-        float rr = r * sqrt((float(i) + 0.5) / float(taps));
-        float4 t = src.sample(s, uv + float2(cos(a), sin(a)) * rr * texel);
+    for (int j = 0; j < taps; j++) {
+        float2 d = kDisc[(j * 12 + 6) / taps];
+        float2 o = float2(d.x * cs.x - d.y * cs.y, d.x * cs.y + d.y * cs.x) * r;
+        float4 t = src.sample(s, uv + o * texel);
         if (t.a < 0.01) continue;
         acc += t;
         wsum += 1.0;
@@ -879,7 +889,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
     zoomMix = zoomMix * zoomMix * (3.0 - 2.0 * zoomMix);
     float2 greenUV = backdropSampleUV(capturePx, px, dispPx,
                                       isCoverSheet, u, zoomMix);
-    float4 greenSample = glassSample(src, s, greenUV, u, 16, 0.0);
+    float4 greenSample = glassSample(src, s, greenUV, u, 12, 0.0);
 
     float4 fallback = float4(0.0);
     bool loadedFallback = false;
@@ -901,7 +911,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             float2 uv = backdropSampleUV(capturePx, px,
                                           dispPx + aberrationPx * weight,
                                           isCoverSheet, u, zoomMix);
-            float4 sample = glassSample(src, s, uv, u, 4, 1.7 * float(i));
+            float4 sample = glassSample(src, s, uv, u, 2, 1.7 * float(i));
             if (sample.a < 0.01) {
                 if (!loadedFallback) {
                     fallback = src.sample(s, captureUV);
@@ -919,7 +929,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             float2 uv = backdropSampleUV(capturePx, px,
                                           dispPx - aberrationPx * weight,
                                           isCoverSheet, u, zoomMix);
-            float4 sample = glassSample(src, s, uv, u, 4, 0.9 + 1.7 * float(i));
+            float4 sample = glassSample(src, s, uv, u, 2, 0.9 + 1.7 * float(i));
             if (sample.a < 0.01) {
                 if (!loadedFallback) {
                     fallback = src.sample(s, captureUV);
