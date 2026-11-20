@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.3
+// IOS26CCStyle 0.4.4
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -1391,6 +1391,7 @@ static UIImage *BloomImage(CGSize sz, CGFloat radius, CGFloat pad) {
             CGFloat g = pad * i / 14.0;
             [[UIBezierPath bezierPathWithRoundedRect:CGRectInset(r, -g, -g) cornerRadius:radius + g] fill];
         }
+        [[UIBezierPath bezierPathWithRoundedRect:r cornerRadius:radius] fillWithBlendMode:kCGBlendModeClear alpha:1.0];
     }];
     [cache setObject:img forKey:key];
     return img;
@@ -1414,6 +1415,7 @@ static void Bloom(UIView *v) {
     o.values = @[@0.0, @1.0, @0.0];
     o.keyTimes = @[@0.0, @0.22, @1.0];
     CABasicAnimation *sc = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+    o.duration = sc.duration = 0.7;
     sc.fromValue = @0.96; sc.toValue = @1.1;
     sc.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
     CAAnimationGroup *grp = [CAAnimationGroup animation];
