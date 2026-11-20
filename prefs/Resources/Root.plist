@@ -842,9 +842,9 @@
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
-			<string>touchGlow</string>
+			<string>shimmer</string>
 			<key>label</key>
-			<string>Touch glow</string>
+			<string>Switch-on shimmer</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
