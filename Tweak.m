@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.5
+// IOS26CCStyle 0.4.6
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -15,6 +15,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
+#define XC_VERSION "0.4.6"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -1245,6 +1246,70 @@ static void MotionPress(UIView *v, double target, BOOL down) {
 }
 
 
+// iOS 26 interactive glass: a soft white light blooms under the finger on the brightness and volume
+// sliders, below their content, and fades when the finger lifts.
+static CALayer *GlowLayer(UIView *v) {
+    for (CALayer *l in v.layer.sublayers) if ([l.name isEqualToString:@"xc.touchglow"]) return l;
+    return nil;
+}
+
+static void GlowShow(UIView *v, CGPoint p) {
+    CGSize sz = v.bounds.size;
+    CALayer *clip = GlowLayer(v);
+    if (!clip) {
+        clip = [CALayer layer];
+        clip.name = @"xc.touchglow";
+        clip.masksToBounds = YES;
+        clip.opacity = 0;
+        CAGradientLayer *g = [CAGradientLayer layer];
+        g.type = kCAGradientLayerRadial;
+        g.startPoint = CGPointMake(0.5, 0.5);
+        g.endPoint = CGPointMake(1.0, 1.0);
+        g.locations = @[@0.0, @0.5, @1.0];
+        g.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:0.34].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:0.12].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
+        [clip addSublayer:g];
+        [v.layer insertSublayer:clip atIndex:0];
+    }
+    CGFloat rad = v.layer.cornerRadius > 0 ? v.layer.cornerRadius : MIN(MIN(sz.width, sz.height) * 0.5, gMaxRadius);
+    clip.frame = v.bounds;
+    clip.cornerRadius = MIN(rad, MIN(sz.width, sz.height) * 0.5);
+    clip.cornerCurve = kCACornerCurveContinuous;
+    CGFloat R = MAX(80.0, MIN(140.0, MAX(sz.width, sz.height) * 0.75));
+    CAGradientLayer *g = (CAGradientLayer *)clip.sublayers.firstObject;
+    g.bounds = CGRectMake(0, 0, R * 2, R * 2);
+    g.position = p;
+    [clip removeAnimationForKey:@"xc.glowout"];
+    clip.opacity = 1;
+    CABasicAnimation *in = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    in.fromValue = @0; in.toValue = @1; in.duration = 0.08;
+    [clip addAnimation:in forKey:@"xc.glowin"];
+    CABasicAnimation *bloom = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+    bloom.fromValue = @0.55; bloom.toValue = @1.0; bloom.duration = 0.28;
+    bloom.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    [g addAnimation:bloom forKey:@"xc.bloom"];
+}
+
+static void GlowHide(CALayer *clip) {
+    CABasicAnimation *out = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    out.fromValue = @(clip.presentationLayer ? clip.presentationLayer.opacity : 1.0f);
+    out.toValue = @0; out.duration = 0.55;
+    out.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    clip.opacity = 0;
+    [clip addAnimation:out forKey:@"xc.glowout"];
+}
+
+static void TouchGlow(UIView *v, NSSet *touches, BOOL down) {
+    if (!gMotion || !gEnabled || ![NSStringFromClass(v.class) isEqualToString:@"CCUIContinuousSliderView"]) return;
+    if (v.bounds.size.width < 20 || v.bounds.size.height < 20) return;
+    CALayer *clip = GlowLayer(v);
+    if (down) {
+        UITouch *t = touches.anyObject;
+        if (t) GlowShow(v, [t locationInView:v]);
+    } else if (clip && clip.opacity > 0) {
+        GlowHide(clip);
+    }
+}
+
 static const void *kWasOnKey = &kWasOnKey;
 
 // iOS 26: a soft band of light sweeps across a glass tile as it switches on.
@@ -1310,9 +1375,9 @@ static void TouchRefresh(UIView *v) {
     static void (*orig_tb_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_te_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_tc_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
-    static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, YES); } \
-    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchRefresh(self); }  \
-    static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); }  \
+    static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, YES); TouchGlow(self, t, YES); } \
+    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchGlow(self, t, NO); TouchRefresh(self); }  \
+    static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchGlow(self, t, NO); }  \
     static void InstallTouch_##TAG(const char *cls) {                                         \
         IMP o = NULL;                                                                         \
         if (InstallHook(cls, @selector(touchesBegan:withEvent:), (IMP)new_tb_##TAG, &o)) orig_tb_##TAG = (void (*)(UIView *, SEL, NSSet *, UIEvent *))o;     \
@@ -1534,7 +1599,8 @@ static const void *kPageGenKey = &kPageGenKey;
 static const void *kPageStateKey = &kPageStateKey;
 
 @interface XCPageState : NSObject
-@property (nonatomic) CGFloat off, speed, peak, squeeze;
+@property (nonatomic) CGFloat off, speed, peak, squeeze, dir;
+@property (nonatomic) BOOL armed, dumped;
 @property (nonatomic) CFTimeInterval time;
 @end
 @implementation XCPageState
@@ -1542,14 +1608,14 @@ static const void *kPageStateKey = &kPageStateKey;
 
 // iOS 27, measured on a recording: a page fades with its distance from the centre (about half at a full
 // page away). While the pages move they are squeezed as well, about 1 % per 1000 pt/s of the fastest
-// speed of the flick (at most 8 %); the squeeze is held until the scroll lands, then a spring releases it.
+// speed of the flick (at most 8 %). A flick lands with a bounce: the pages run past their rest position
+// (up to 17 pt, more the faster the flick) and settle back while a spring releases the squeeze.
 static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     if (!gMotion || !gEnabled) return;
     NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
     if (!flag) {
         flag = @([NSStringFromClass(self.class) isEqualToString:@"CCUIIconScrollView"]);   // not the home screen's SBIconScrollView
         objc_setAssociatedObject(self, kPageScrollKey, flag, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        if (flag.boolValue) DumpPageScroll(self);
     }
     if (!flag.boolValue) return;
 
@@ -1567,17 +1633,38 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
         st = [XCPageState new];
         objc_setAssociatedObject(self, kPageStateKey, st, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    CGFloat off = vertical ? self.contentOffset.y : self.contentOffset.x;
+    if (!st.dumped) { st.dumped = YES; DumpPageScroll(self); }   // once the view has its real size
+    CGFloat off = vertical ? self.contentOffset.y : self.contentOffset.x, bounce = 0;
     CFTimeInterval now = CACurrentMediaTime(), dt = now - st.time;
     if (settle) {
         st.speed = st.peak = st.squeeze = 0;
+        st.armed = NO;
     } else if (dt > 0.004) {
-        st.speed = 0.5 * st.speed + 0.5 * (dt < 0.25 ? fabs(off - st.off) / dt : 0);
+        CGFloat dv = off - st.off;
+        st.speed = 0.5 * st.speed + 0.5 * (dt < 0.25 ? fabs(dv) / dt : 0);
+        if (st.speed > 600 && dv != 0) st.dir = dv > 0 ? 1 : -1;
         st.peak = MAX(st.peak, st.speed);
         CGFloat target = MIN(1.0, st.peak / 8000.0) * 0.08 * fx / 0.6;
         st.squeeze += (target - st.squeeze) * (1.0 - exp(-dt / 0.08));
+        if (self.tracking) st.armed = NO;   // a drag that slows down under the finger is not a landing
+        else if (st.speed > 1500) st.armed = YES;
+        else if (st.armed && st.speed < 500) {   // the flick is about to land: the pages run on a little
+            st.armed = NO;
+            bounce = -st.dir * MIN(17.0, st.peak / 450.0);
+        }
     }
     if (settle || dt > 0.004) { st.off = off; st.time = now; }
+
+    CAKeyframeAnimation *kick = nil;
+    if (bounce != 0) {
+        kick = [CAKeyframeAnimation animationWithKeyPath:vertical ? @"transform.translation.y" : @"transform.translation.x"];
+        kick.values = @[@0, @(bounce), @0];
+        kick.keyTimes = @[@0, @0.5, @1];
+        kick.timingFunctions = @[[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut],
+                                 [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut]];
+        kick.duration = 0.32;
+        kick.additive = YES;
+    }
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -1592,22 +1679,26 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
             l.allowsGroupOpacity = NO;   // fade each tile on its own: no offscreen pass over the glass
             objc_setAssociatedObject(p, kPageFxKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
-        if (st.speed > 1.0) [l removeAnimationForKey:@"xc.relax"];   // a new flick takes over from the release
+        if (st.speed > 1200) {   // a new flick takes over from the previous landing
+            [l removeAnimationForKey:@"xc.relax"];
+            [l removeAnimationForKey:@"xc.bounce"];
+        }
         if (fabs(l.opacity - opacity) > 0.004) l.opacity = opacity;
         if (fabs(l.transform.m11 - scale) > 0.002) {
             l.transform = CATransform3DMakeScale(scale, scale, 1.0);
-            if (settle && fabs(from - scale) > 0.004) [l addAnimation:Spring(@"transform.scale", from, scale, 44, 500) forKey:@"xc.relax"];
+            if (settle && fabs(from - scale) > 0.004) [l addAnimation:Spring(@"transform.scale", from, scale, 60, 900) forKey:@"xc.relax"];
         }
+        if (kick) [l addAnimation:kick forKey:@"xc.bounce"];
     }
     [CATransaction commit];
 
     if (!settle) {
-        // no scroll callback for 70 ms: the scroll has landed, release the squeeze
+        // no scroll callback for 55 ms: the scroll has landed, release the squeeze
         NSUInteger gen = [objc_getAssociatedObject(self, kPageGenKey) unsignedIntegerValue] + 1;
         objc_setAssociatedObject(self, kPageGenKey, @(gen), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         if (st.squeeze > 0.002) {
             __weak UIScrollView *ws = self;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.07 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.055 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 UIScrollView *sv = ws;
                 if (sv && [objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) ApplyPageScrollTo(sv, YES);
             });
@@ -1645,11 +1736,38 @@ static void PrefsChanged(CFNotificationCenterRef center, void *observer, CFStrin
 
 // MARK: - Entry point ---------------------------------------------------------
 
+// Logs older than one change are deleted. The first run of each version is recorded, and whatever was
+// written before the previous version first ran is removed (a crash report from an old build once
+// outlived six updates). The current backboardd session log (xenonglass.log) is never touched.
+static void PruneOldLogs(void) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *state = @"/var/mobile/Library/Preferences/ios26ccstyle-changes.state";   // "<version> <first run> <previous version's first run>"
+    NSArray *s = [[NSString stringWithContentsOfFile:state encoding:NSUTF8StringEncoding error:nil] componentsSeparatedByString:@" "];
+    BOOL known = s.count == 3;
+    time_t now = time(NULL), cur = known ? (time_t)[s[1] longLongValue] : now, prev = known ? (time_t)[s[2] longLongValue] : now;
+    if (!known || ![s[0] isEqualToString:@XC_VERSION]) {
+        prev = known ? cur : now;   // the very first run keeps nothing that is older than itself
+        cur = now;
+        [[NSString stringWithFormat:@"%s %ld %ld", XC_VERSION, (long)cur, (long)prev] writeToFile:state atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
+    NSArray *dirs = @[@[@"/var/mobile/Library/Preferences/", @"ios26ccstyle-", @".txt"],    // view, tile and animation dumps
+                      @[@"/var/mobile/Library/Accessibility/", @"xenonglass-", @".log"]];   // previous session, crash report, safe mode
+    for (NSArray *d in dirs) {
+        for (NSString *n in [fm contentsOfDirectoryAtPath:d[0] error:nil]) {
+            if (![n hasPrefix:d[1]] || ![n hasSuffix:d[2]]) continue;
+            NSString *path = [d[0] stringByAppendingString:n];
+            NSDate *m = [fm attributesOfItemAtPath:path error:nil].fileModificationDate;
+            if (m && m.timeIntervalSince1970 < prev) [fm removeItemAtPath:path error:nil];
+        }
+    }
+}
+
 __attribute__((constructor))
 static void IOS26CCStyleInit(void) {
     @autoreleasepool {
         if (![[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
 
+        PruneOldLogs();
         LoadPrefs();
 
         Install_ModuleFill  ("CCUIContentModuleBackgroundView");
