@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.7
+// IOS26CCStyle 0.4.8
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -15,7 +15,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.7"
+#define XC_VERSION "0.4.8"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -1405,15 +1405,15 @@ static BOOL IsExpandContext(UIView *v) {
     return NO;
 }
 
-// Control Center's open / close springs (scale and fade of every tile, the page dots, the status bar)
-// live on views inside the icon list folder and the CC status bar, not in a module container.
+// Control Center's open / close springs (scale and fade of every tile, the status bar) live on views
+// inside the icon list folder and the CC status bar, not in a module container. The page buttons stay stock.
 static BOOL IsPageContext(UIView *v) {
     UIWindow *w = v.window;
-    if (w && ![NSStringFromClass(w.class) containsString:@"ControlCenter"]) return NO;   // the home screen has an SBIconListPageControl too
+    if (w && ![NSStringFromClass(w.class) containsString:@"ControlCenter"]) return NO;   // not the home screen
     int n = 0;
     for (UIView *a = v; a && n < 10; a = a.superview, n++) {
         NSString *c = NSStringFromClass(a.class);
-        if ([c containsString:@"IconListFolderView"] || [c isEqualToString:@"SBIconListPageControl"] || [c isEqualToString:@"CCUIStatusBar"]) return YES;
+        if ([c containsString:@"IconListFolderView"] || [c isEqualToString:@"CCUIStatusBar"]) return YES;
     }
     return NO;
 }
@@ -1601,18 +1601,51 @@ static const void *kPageGenKey = &kPageGenKey;
 static const void *kPageStateKey = &kPageStateKey;
 
 @interface XCPageState : NSObject
-@property (nonatomic) CGFloat off, speed, peak, squeeze, dir;
-@property (nonatomic) BOOL armed, dumped;
-@property (nonatomic) CFTimeInterval time, releaseAt;
+@property (nonatomic) CGFloat off, speed, peak, k;
+@property (nonatomic) BOOL armed, released, finger, dirty, dumped;
+@property (nonatomic) CFTimeInterval time;
 @end
 @implementation XCPageState
 @end
 
-// iOS 27, measured on a recording: a page fades with its distance from the centre (about half at a full
-// page away). While the pages move they are squeezed as well, about 1 % per 1000 pt/s of the fastest
-// speed of the flick (at most 8 %). A flick lands with a bounce: the pages run past their rest position
-// (up to 30 pt, more the faster the flick; peak 70 ms after the page arrives, home 190 ms after) and the
-// squeeze is released about 50 ms after the page arrives, over 140 ms.
+// Pages stretch along the scroll direction and squeeze across it, area kept (k = 0.05: 5 % taller, 1/1.05 as wide).
+static CATransform3D PageStretch(BOOL vertical, CGFloat k) {
+    CGFloat s = 1.0 + k;
+    return vertical ? CATransform3DMakeScale(1.0 / s, s, 1.0) : CATransform3DMakeScale(s, 1.0 / s, 1.0);
+}
+
+// The stretch lets go as the page lands: straight back to rest in 100 ms, 45 % of it the other way at 180 ms, home at 270 ms.
+static void ReleasePageStretch(NSArray *pages, BOOL vertical, CGFloat k) {
+    if (fabs(k) < 0.004) return;
+    CAKeyframeAnimation *a = [CAKeyframeAnimation animationWithKeyPath:@"transform"];
+    a.values = @[[NSValue valueWithCATransform3D:PageStretch(vertical, k)], [NSValue valueWithCATransform3D:CATransform3DIdentity],
+                 [NSValue valueWithCATransform3D:PageStretch(vertical, -0.45 * k)], [NSValue valueWithCATransform3D:CATransform3DIdentity]];
+    a.keyTimes = @[@0, @0.37, @0.67, @1];
+    a.timingFunctions = @[[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear],
+                          [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut],
+                          [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut]];
+    a.duration = 0.27;
+    for (UIView *p in pages) [p.layer addAnimation:a forKey:@"xc.relax"];
+}
+
+static void ApplyPageScrollTo(UIScrollView *self, BOOL settle);
+
+// No scroll callback for 55 ms: the scroll has landed.
+static void SchedulePageSettle(UIScrollView *self) {
+    NSUInteger gen = [objc_getAssociatedObject(self, kPageGenKey) unsignedIntegerValue] + 1;
+    objc_setAssociatedObject(self, kPageGenKey, @(gen), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    __weak UIScrollView *ws = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.055 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIScrollView *sv = ws;
+        if (sv && [objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) ApplyPageScrollTo(sv, YES);
+    });
+}
+
+// iOS 27, measured frame by frame on a recording of finger flicks between pages: a page fades with its
+// distance from the centre (about half at a full page away) and, while the pages move, is stretched along
+// the scroll by up to 5 % (held while the flick runs, set by its speed: full at 2000 pt/s). The stretch is
+// released as the flick slows to a stop (about a frame before the page lands, ReleasePageStretch). Only a
+// scroll that a finger started gets any of this; the side buttons' scroll stays stock.
 static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     if (!gMotion || !gEnabled) return;
     NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
@@ -1637,38 +1670,51 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
         objc_setAssociatedObject(self, kPageStateKey, st, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (!st.dumped) { st.dumped = YES; DumpPageScroll(self); }   // once the view has its real size
-    CGFloat off = vertical ? self.contentOffset.y : self.contentOffset.x, bounce = 0;
+    if (settle && self.decelerating) { SchedulePageSettle(self); return; }   // a late frame, not a landing
+
+    CGFloat off = vertical ? self.contentOffset.y : self.contentOffset.x;
+    if (!settle && (self.tracking || self.dragging)) st.finger = YES;
+    if (!st.finger && !settle) {
+        if (st.dirty && fabs(off - st.off) > 0.5) {   // a scroll without a finger (side buttons): back to stock
+            st.dirty = NO;
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            for (UIView *p in pages) {
+                [p.layer removeAnimationForKey:@"xc.relax"];
+                p.layer.opacity = 1.0;
+                p.layer.transform = CATransform3DIdentity;
+            }
+            [CATransaction commit];
+        }
+        return;
+    }
+
     CFTimeInterval now = CACurrentMediaTime(), dt = now - st.time;
+    BOOL lands = NO;
     if (settle) {
-        st.speed = st.peak = st.squeeze = st.releaseAt = 0;
+        lands = !st.released;   // the slowing down did not catch this landing
+        st.speed = st.peak = 0;
         st.armed = NO;
     } else if (dt > 0.004) {
-        CGFloat dv = off - st.off;
-        st.speed = 0.5 * st.speed + 0.5 * (dt < 0.25 ? fabs(dv) / dt : 0);
-        if (st.speed > 600 && dv != 0) st.dir = dv > 0 ? 1 : -1;
+        st.speed = 0.5 * st.speed + 0.5 * (dt < 0.25 ? fabs(off - st.off) / dt : 0);
+        if (st.released && (self.tracking || st.speed > 1500)) {   // a new touch or flick takes over from the landing
+            st.released = NO; st.peak = 0; st.k = 0;
+            for (UIView *p in pages) [p.layer removeAnimationForKey:@"xc.relax"];
+        }
         st.peak = MAX(st.peak, st.speed);
-        CGFloat target = MIN(1.0, st.peak / 8000.0) * 0.08 * fx / 0.6;
-        st.squeeze += (target - st.squeeze) * (1.0 - exp(-dt / 0.08));
         if (self.tracking) st.armed = NO;   // a drag that slows down under the finger is not a landing
-        else if (st.speed > 1500) { st.armed = YES; st.releaseAt = 0; }   // a new flick: no release is due
-        else if (st.armed && st.speed < 500) {   // the flick is about to land: the pages run on a little
-            st.armed = NO;
-            bounce = -st.dir * MIN(30.0, st.peak / 180.0 * fx / 0.6);
-            st.releaseAt = now + 0.095;
+        else if (st.speed > 1500) st.armed = YES;
+        else if (st.armed && st.speed < 500) { st.armed = NO; if (!st.released) { st.released = YES; lands = YES; } }
+        if (!st.released) {
+            CGFloat target = MIN(1.0, st.peak / 2000.0) * 0.05 * fx / 0.6;
+            st.k += (target - st.k) * (1.0 - exp(-dt / 0.06));
         }
     }
     if (settle || dt > 0.004) { st.off = off; st.time = now; }
 
-    CAKeyframeAnimation *kick = nil;
-    if (bounce != 0) {
-        kick = [CAKeyframeAnimation animationWithKeyPath:vertical ? @"transform.translation.y" : @"transform.translation.x"];
-        kick.values = @[@0, @(bounce), @0];
-        kick.keyTimes = @[@0, @0.42, @1];
-        kick.timingFunctions = @[[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut],
-                                 [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut]];
-        kick.duration = 0.23;
-        kick.additive = YES;
-    }
+    CGFloat from = st.k;
+    if (lands) { st.k = 0; st.released = YES; }
+    st.dirty = YES;
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -1676,44 +1722,20 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
         CGPoint m = [p.superview convertPoint:p.center toView:self];
         CGFloat d = vertical ? (m.y - self.contentOffset.y - span * 0.5) : (m.x - self.contentOffset.x - span * 0.5);
         CGFloat a = MIN(1.0, fabs(d / span));
-        CGFloat scale = 1.0 - st.squeeze, opacity = 1.0 - 0.83 * fx * a;
+        CGFloat opacity = 1.0 - 0.83 * fx * a;
         CALayer *l = p.layer;
-        CGFloat from = (l.presentationLayer ?: l).transform.m11;
         if (!objc_getAssociatedObject(p, kPageFxKey)) {
             l.allowsGroupOpacity = NO;   // fade each tile on its own: no offscreen pass over the glass
             objc_setAssociatedObject(p, kPageFxKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
-        if (st.speed > 1200) {   // a new flick takes over from the previous landing
-            [l removeAnimationForKey:@"xc.relax"];
-            [l removeAnimationForKey:@"xc.bounce"];
-        }
         if (fabs(l.opacity - opacity) > 0.004) l.opacity = opacity;
-        if (fabs(l.transform.m11 - scale) > 0.002) {
-            l.transform = CATransform3DMakeScale(scale, scale, 1.0);
-            if (settle && fabs(from - scale) > 0.004) {
-                CABasicAnimation *rel = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
-                rel.fromValue = @(from); rel.toValue = @(scale); rel.duration = 0.14;
-                rel.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-                [l addAnimation:rel forKey:@"xc.relax"];
-            }
-        }
-        if (kick) [l addAnimation:kick forKey:@"xc.bounce"];
+        l.transform = PageStretch(vertical, st.k);
     }
     [CATransaction commit];
+    if (lands) ReleasePageStretch(pages, vertical, from);
 
-    if (!settle) {
-        // no scroll callback for 55 ms (or the landing bounce is due): the scroll has landed, release the squeeze
-        NSUInteger gen = [objc_getAssociatedObject(self, kPageGenKey) unsignedIntegerValue] + 1;
-        objc_setAssociatedObject(self, kPageGenKey, @(gen), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        if (st.squeeze > 0.002) {
-            __weak UIScrollView *ws = self;
-            CFTimeInterval wait = st.releaseAt > now ? MIN(0.055, st.releaseAt - now) : 0.055;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                UIScrollView *sv = ws;
-                if (sv && [objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) ApplyPageScrollTo(sv, YES);
-            });
-        }
-    }
+    if (!settle) SchedulePageSettle(self);
+    else st.finger = NO;
 }
 
 static void ApplyPageScroll(UIScrollView *self) { ApplyPageScrollTo(self, NO); }
