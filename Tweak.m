@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.6
+// IOS26CCStyle 0.4.7
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -15,7 +15,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.6"
+#define XC_VERSION "0.4.7"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -1299,7 +1299,9 @@ static void GlowHide(CALayer *clip) {
 }
 
 static void TouchGlow(UIView *v, NSSet *touches, BOOL down) {
-    if (!gMotion || !gEnabled || ![NSStringFromClass(v.class) isEqualToString:@"CCUIContinuousSliderView"]) return;
+    static Class slider;   // brightness is a CCUIContinuousSliderView, volume is a subclass of it (MRUContinuousSliderView)
+    if (!slider) slider = objc_getClass("CCUIContinuousSliderView");
+    if (!gMotion || !gEnabled || !slider || ![v isKindOfClass:slider]) return;
     if (v.bounds.size.width < 20 || v.bounds.size.height < 20) return;
     CALayer *clip = GlowLayer(v);
     if (down) {
@@ -1601,7 +1603,7 @@ static const void *kPageStateKey = &kPageStateKey;
 @interface XCPageState : NSObject
 @property (nonatomic) CGFloat off, speed, peak, squeeze, dir;
 @property (nonatomic) BOOL armed, dumped;
-@property (nonatomic) CFTimeInterval time;
+@property (nonatomic) CFTimeInterval time, releaseAt;
 @end
 @implementation XCPageState
 @end
@@ -1609,7 +1611,8 @@ static const void *kPageStateKey = &kPageStateKey;
 // iOS 27, measured on a recording: a page fades with its distance from the centre (about half at a full
 // page away). While the pages move they are squeezed as well, about 1 % per 1000 pt/s of the fastest
 // speed of the flick (at most 8 %). A flick lands with a bounce: the pages run past their rest position
-// (up to 17 pt, more the faster the flick) and settle back while a spring releases the squeeze.
+// (up to 30 pt, more the faster the flick; peak 70 ms after the page arrives, home 190 ms after) and the
+// squeeze is released about 50 ms after the page arrives, over 140 ms.
 static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     if (!gMotion || !gEnabled) return;
     NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
@@ -1637,7 +1640,7 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     CGFloat off = vertical ? self.contentOffset.y : self.contentOffset.x, bounce = 0;
     CFTimeInterval now = CACurrentMediaTime(), dt = now - st.time;
     if (settle) {
-        st.speed = st.peak = st.squeeze = 0;
+        st.speed = st.peak = st.squeeze = st.releaseAt = 0;
         st.armed = NO;
     } else if (dt > 0.004) {
         CGFloat dv = off - st.off;
@@ -1647,10 +1650,11 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
         CGFloat target = MIN(1.0, st.peak / 8000.0) * 0.08 * fx / 0.6;
         st.squeeze += (target - st.squeeze) * (1.0 - exp(-dt / 0.08));
         if (self.tracking) st.armed = NO;   // a drag that slows down under the finger is not a landing
-        else if (st.speed > 1500) st.armed = YES;
+        else if (st.speed > 1500) { st.armed = YES; st.releaseAt = 0; }   // a new flick: no release is due
         else if (st.armed && st.speed < 500) {   // the flick is about to land: the pages run on a little
             st.armed = NO;
-            bounce = -st.dir * MIN(17.0, st.peak / 450.0);
+            bounce = -st.dir * MIN(30.0, st.peak / 180.0 * fx / 0.6);
+            st.releaseAt = now + 0.095;
         }
     }
     if (settle || dt > 0.004) { st.off = off; st.time = now; }
@@ -1659,10 +1663,10 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     if (bounce != 0) {
         kick = [CAKeyframeAnimation animationWithKeyPath:vertical ? @"transform.translation.y" : @"transform.translation.x"];
         kick.values = @[@0, @(bounce), @0];
-        kick.keyTimes = @[@0, @0.5, @1];
+        kick.keyTimes = @[@0, @0.42, @1];
         kick.timingFunctions = @[[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut],
                                  [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut]];
-        kick.duration = 0.32;
+        kick.duration = 0.23;
         kick.additive = YES;
     }
 
@@ -1686,19 +1690,25 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
         if (fabs(l.opacity - opacity) > 0.004) l.opacity = opacity;
         if (fabs(l.transform.m11 - scale) > 0.002) {
             l.transform = CATransform3DMakeScale(scale, scale, 1.0);
-            if (settle && fabs(from - scale) > 0.004) [l addAnimation:Spring(@"transform.scale", from, scale, 60, 900) forKey:@"xc.relax"];
+            if (settle && fabs(from - scale) > 0.004) {
+                CABasicAnimation *rel = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+                rel.fromValue = @(from); rel.toValue = @(scale); rel.duration = 0.14;
+                rel.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+                [l addAnimation:rel forKey:@"xc.relax"];
+            }
         }
         if (kick) [l addAnimation:kick forKey:@"xc.bounce"];
     }
     [CATransaction commit];
 
     if (!settle) {
-        // no scroll callback for 55 ms: the scroll has landed, release the squeeze
+        // no scroll callback for 55 ms (or the landing bounce is due): the scroll has landed, release the squeeze
         NSUInteger gen = [objc_getAssociatedObject(self, kPageGenKey) unsignedIntegerValue] + 1;
         objc_setAssociatedObject(self, kPageGenKey, @(gen), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         if (st.squeeze > 0.002) {
             __weak UIScrollView *ws = self;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.055 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            CFTimeInterval wait = st.releaseAt > now ? MIN(0.055, st.releaseAt - now) : 0.055;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 UIScrollView *sv = ws;
                 if (sv && [objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) ApplyPageScrollTo(sv, YES);
             });

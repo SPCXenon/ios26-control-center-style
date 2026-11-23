@@ -1847,12 +1847,14 @@ static MSHookFunctionFn lgResolveHookFunction(void) {
         return hook;
     }
 
+    // The jailbreak's loader already has its hook library mapped, so the bare names resolve first; the full
+    // paths are only fallbacks (on a rootless install /usr/lib/libellekit.dylib does not exist).
     static const char *candidates[] = {
+        "libellekit.dylib",
+        "libsubstrate.dylib",
         jbroot("/usr/lib/libellekit.dylib"),
         jbroot("/usr/lib/libsubstrate.dylib"),
         jbroot("/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate"),
-        "libellekit.dylib",
-        "libsubstrate.dylib",
     };
     for (const char *path : candidates) {
         lglog("hook: trying backend %s", path);
