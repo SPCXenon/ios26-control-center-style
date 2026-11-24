@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.10
+// IOS26CCStyle 0.4.11
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -15,7 +15,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.10"
+#define XC_VERSION "0.4.11"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -118,20 +118,20 @@ static void LoadPrefs(void) {
     gPageSpeed     = PrefDouble(@"pageSpeed", 1.8, 0.5, 3.0);
     gPageFx        = PrefDouble(@"pageEffect", 60.0, 0.0, 100.0);
     gMaxRadius     = (CGFloat)PrefDouble(@"maxRadius", 46.0, 16.0, 70.0);
-    gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.9, 0.0, 1.0);
-    gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.9, 0.3, 2.5);
-    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.07, 0.0, 0.2);
+    gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.7, 0.0, 1.0);
+    gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.8, 0.3, 2.5);
+    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.06, 0.0, 0.2);
     gTint          = (CGFloat)PrefDouble(@"fillTint", 0.0, 0.0, 0.3);
-    gInner         = (CGFloat)PrefDouble(@"innerRim", 0.1, 0.0, 1.0);
-    gHot           = (CGFloat)PrefDouble(@"glow", 0.15, 0.0, 0.3);
-    gGlass         = (CGFloat)PrefDouble(@"glassTint", 0.5, 0.0, 1.0);
+    gInner         = (CGFloat)PrefDouble(@"innerRim", 0.2, 0.0, 1.0);
+    gHot           = (CGFloat)PrefDouble(@"glow", 0.12, 0.0, 0.3);
+    gGlass         = (CGFloat)PrefDouble(@"glassTint", 0.55, 0.0, 1.0);
     gMatAlpha      = 0.35 + 0.65 * gGlass;
     gEffTint       = MIN(0.5, 0.03 + 0.17 * gGlass + gTint);
     gRimMul        = 1.3 - 0.5 * gGlass;
-    gReflect       = (CGFloat)PrefDouble(@"reflect", 0.8, 0.0, 1.0);
-    gEdgeDark      = (CGFloat)PrefDouble(@"edgeDark", 0.5, 0.0, 1.0);
+    gReflect       = (CGFloat)PrefDouble(@"reflect", 0.7, 0.0, 1.0);
+    gEdgeDark      = (CGFloat)PrefDouble(@"edgeDark", 0.35, 0.0, 1.0);
     gBgBlur        = (CGFloat)PrefDouble(@"bgBlur", 1.0, 0.0, 1.0);
-    gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.5, 0.0, 1.0);
+    gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.6, 0.0, 1.0);
     gDebugDump     = PrefBool(@"debugDump", YES);
     gRefract       = PrefBool(@"refraction", YES) && PrefBool(@"Renderer.Enabled", YES);
     gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
@@ -834,8 +834,10 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
             g.layer.masksToBounds = YES;
             g.glassRadius = radius;
             g.glassDark = dark;
-            // base tint on the glass itself (the stock background view is alpha 0)
-            g.backgroundColor = [UIColor colorWithWhite:dark ? 0.55 : 1.0 alpha:dark ? 0.05 + 0.10 * gGlass : 0.03 + 0.08 * gGlass];
+            // base tint on the glass itself (the stock background view is alpha 0). In dark mode it is a smoky
+            // veil, like the stock material it replaces (a pale one made page 1 look washed out next to page 3).
+            g.backgroundColor = dark ? [UIColor colorWithRed:0.04 green:0.05 blue:0.08 alpha:0.05 + 0.30 * gGlass]
+                                     : [UIColor colorWithWhite:1.0 alpha:0.03 + 0.08 * gGlass];
             [g attachFilter];
             if (!s.hidden) s.hidden = YES;
             continue;

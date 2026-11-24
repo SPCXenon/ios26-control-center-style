@@ -40,7 +40,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.5</real>
+			<real>0.55</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -192,7 +192,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.8</real>
+			<real>0.7</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -220,7 +220,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.9</real>
+			<real>0.7</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -246,7 +246,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.9</real>
+			<real>0.8</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -274,7 +274,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.5</real>
+			<real>0.6</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -302,7 +302,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.5</real>
+			<real>0.35</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -330,7 +330,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.15</real>
+			<real>0.12</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -358,7 +358,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.1</real>
+			<real>0.06</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -386,7 +386,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.1</real>
+			<real>0.2</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
@@ -646,7 +646,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>1.8</real>
+			<real>1.4</real>
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>

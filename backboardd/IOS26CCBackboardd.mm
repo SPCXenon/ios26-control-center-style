@@ -911,7 +911,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             float2 uv = backdropSampleUV(capturePx, px,
                                           dispPx + aberrationPx * weight,
                                           isCoverSheet, u, zoomMix);
-            float4 sample = glassSample(src, s, uv, u, 2, 1.7 * float(i));
+            float4 sample = glassSample(src, s, uv, u, 4, 1.7 * float(i));
             if (sample.a < 0.01) {
                 if (!loadedFallback) {
                     fallback = src.sample(s, captureUV);
@@ -929,7 +929,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             float2 uv = backdropSampleUV(capturePx, px,
                                           dispPx - aberrationPx * weight,
                                           isCoverSheet, u, zoomMix);
-            float4 sample = glassSample(src, s, uv, u, 2, 0.9 + 1.7 * float(i));
+            float4 sample = glassSample(src, s, uv, u, 4, 0.9 + 1.7 * float(i));
             if (sample.a < 0.01) {
                 if (!loadedFallback) {
                     fallback = src.sample(s, captureUV);
