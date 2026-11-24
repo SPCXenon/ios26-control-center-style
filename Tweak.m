@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.8
+// IOS26CCStyle 0.4.9
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -15,7 +15,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.8"
+#define XC_VERSION "0.4.9"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -1614,17 +1614,14 @@ static CATransform3D PageStretch(BOOL vertical, CGFloat k) {
     return vertical ? CATransform3DMakeScale(1.0 / s, s, 1.0) : CATransform3DMakeScale(s, 1.0 / s, 1.0);
 }
 
-// The stretch lets go as the page lands: straight back to rest in 100 ms, 45 % of it the other way at 180 ms, home at 270 ms.
+// The stretch lets go as the page lands: a straight line back to rest in 140 ms, no swing the other way.
 static void ReleasePageStretch(NSArray *pages, BOOL vertical, CGFloat k) {
     if (fabs(k) < 0.004) return;
-    CAKeyframeAnimation *a = [CAKeyframeAnimation animationWithKeyPath:@"transform"];
-    a.values = @[[NSValue valueWithCATransform3D:PageStretch(vertical, k)], [NSValue valueWithCATransform3D:CATransform3DIdentity],
-                 [NSValue valueWithCATransform3D:PageStretch(vertical, -0.45 * k)], [NSValue valueWithCATransform3D:CATransform3DIdentity]];
-    a.keyTimes = @[@0, @0.37, @0.67, @1];
-    a.timingFunctions = @[[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear],
-                          [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut],
-                          [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut]];
-    a.duration = 0.27;
+    CABasicAnimation *a = [CABasicAnimation animationWithKeyPath:@"transform"];
+    a.fromValue = [NSValue valueWithCATransform3D:PageStretch(vertical, k)];
+    a.toValue = [NSValue valueWithCATransform3D:CATransform3DIdentity];
+    a.duration = 0.14;
+    a.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear];
     for (UIView *p in pages) [p.layer addAnimation:a forKey:@"xc.relax"];
 }
 
@@ -1643,9 +1640,10 @@ static void SchedulePageSettle(UIScrollView *self) {
 
 // iOS 27, measured frame by frame on a recording of finger flicks between pages: a page fades with its
 // distance from the centre (about half at a full page away) and, while the pages move, is stretched along
-// the scroll by up to 5 % (held while the flick runs, set by its speed: full at 2000 pt/s). The stretch is
-// released as the flick slows to a stop (about a frame before the page lands, ReleasePageStretch). Only a
-// scroll that a finger started gets any of this; the side buttons' scroll stays stock.
+// the scroll by up to 7 % (area kept; it builds over about 200 ms and is held while the flick runs, set by
+// its speed: full at 1500 pt/s). The stretch is released as the flick slows to a stop, at about 250 pt/s
+// (ReleasePageStretch: a straight line home in 140 ms). Only a scroll that a finger started gets any of this;
+// the side buttons' scroll stays stock.
 static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     if (!gMotion || !gEnabled) return;
     NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
@@ -1704,10 +1702,10 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
         st.peak = MAX(st.peak, st.speed);
         if (self.tracking) st.armed = NO;   // a drag that slows down under the finger is not a landing
         else if (st.speed > 1500) st.armed = YES;
-        else if (st.armed && st.speed < 500) { st.armed = NO; if (!st.released) { st.released = YES; lands = YES; } }
+        else if (st.armed && st.speed < 320) { st.armed = NO; if (!st.released) { st.released = YES; lands = YES; } }
         if (!st.released) {
-            CGFloat target = MIN(1.0, st.peak / 2000.0) * 0.05 * fx / 0.6;
-            st.k += (target - st.k) * (1.0 - exp(-dt / 0.06));
+            CGFloat target = MIN(1.0, st.peak / 1500.0) * 0.07 * fx / 0.6;
+            st.k += (target - st.k) * (1.0 - exp(-dt / 0.08));
         }
     }
     if (settle || dt > 0.004) { st.off = off; st.time = now; }
