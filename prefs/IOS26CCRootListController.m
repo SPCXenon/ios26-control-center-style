@@ -96,6 +96,7 @@ static BOOL RunTool(NSArray<NSString *> *paths, NSArray<NSString *> *args) {
         @[@"view dump", @"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt"],
         @[@"tile chain", @"/var/mobile/Library/Preferences/ios26ccstyle-tile-chain.txt"],
         @[@"page scroll", @"/var/mobile/Library/Preferences/ios26ccstyle-scroll.txt"],
+        @[@"edit mode", @"/var/mobile/Library/Preferences/ios26ccstyle-edit.txt"],
         @[@"now playing tree", @"/var/mobile/Library/Preferences/ios26ccstyle-expanded-np.txt"],
         @[@"expanded module tree", @"/var/mobile/Library/Preferences/ios26ccstyle-expanded-dump.txt"],
         @[@"stock animations", @"/var/mobile/Library/Preferences/ios26ccstyle-anim-log.txt"],

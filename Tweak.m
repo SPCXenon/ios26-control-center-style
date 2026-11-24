@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.9
+// IOS26CCStyle 0.4.10
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -15,7 +15,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.9"
+#define XC_VERSION "0.4.10"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -298,7 +298,7 @@ static UIImage *EdgeImage(CGFloat cap, CGFloat radius, BOOL dark, CGFloat scale)
         if (gRim > 0.001) {
             // Thin specular line, strong at two opposite corners and nearly clear between ...
             StrokeGradient(c, size, radius, rimInset, gRimWidth,
-                           RimUID(1.0 * pk * rimE, -1), RimUI(0.16 * rimE), RimUI(0.16 * rimE), RimUID(0.85 * pk * rimE, 1), NO);
+                           RimUID(0.9 * pk * rimE, -1), RimUI(0.11 * rimE), RimUI(0.11 * rimE), RimUID(0.75 * pk * rimE, 1), NO);
             // ... backed by wider soft strokes so the highlight fades inward like a bevel.
             StrokeGradient(c, size, radius, rimInset, MAX(2.0, bw * 0.55),
                            RimUID(0.40 * rs * rimE, -1), clear, clear, RimUID(0.30 * rs * rimE, 1), NO);
@@ -308,16 +308,17 @@ static UIImage *EdgeImage(CGFloat cap, CGFloat radius, BOOL dark, CGFloat scale)
             // bottom-right / bottom-left, fading inward, so the whole edge glows instead of a hairline.
             CGFloat dk = 0.4 + 0.6 * MIN(1.0, gDisp);
             CGFloat da = MIN(0.5, 0.26 * rimE * rs * dk);
-            CGFloat dw = MIN(7.0, MAX(3.5, radius * 0.24));
-            UIColor *warm = [UIColor colorWithRed:1.0 green:0.80 blue:0.60 alpha:da];
-            UIColor *cool = [UIColor colorWithRed:0.52 green:0.78 blue:1.0 alpha:da];
-            UIColor *warmS = [UIColor colorWithRed:1.0 green:0.82 blue:0.66 alpha:da * 0.6];
-            UIColor *coolS = [UIColor colorWithRed:0.56 green:0.80 blue:1.0 alpha:da * 0.6];
+            CGFloat dw = MIN(8.0, MAX(4.0, radius * 0.27));
+            // iOS 27.2 reference: lavender at the top-left, cyan-blue at the bottom-right, teal at the top-right, blue at the bottom-left
+            UIColor *warm = [UIColor colorWithRed:0.82 green:0.70 blue:1.0 alpha:da];
+            UIColor *cool = [UIColor colorWithRed:0.50 green:0.80 blue:1.0 alpha:da];
+            UIColor *warmS = [UIColor colorWithRed:0.58 green:0.92 blue:0.84 alpha:da * 0.6];
+            UIColor *coolS = [UIColor colorWithRed:0.56 green:0.72 blue:1.0 alpha:da * 0.6];
             StrokeGradient(c, size, radius, rimInset, dw, warm, clear, clear, cool, NO);
             StrokeGradient(c, size, radius, rimInset, dw, warmS, clear, clear, coolS, YES);
-            // second, refracted line just inside, lit from the opposite diagonal
+            // the reference has no second hairline inside the first, only a faint refracted trace of it
             StrokeGradient(c, size, radius, rimInset + gRimWidth + 1.1, 0.55,
-                           RimUI(0.05 * rimE), RimUI(0.28 * rimE), RimUI(0.28 * rimE), RimUI(0.05 * rimE), YES);
+                           RimUI(0.02 * rimE), RimUI(0.09 * rimE), RimUI(0.09 * rimE), RimUI(0.02 * rimE), YES);
         }
         if (wantOutline) {
             UIColor *o = [UIColor colorWithWhite:0.0 alpha:MIN(0.6, (dark ? 0.38 : 0.20) * gEdgeDark)];
@@ -1067,6 +1068,74 @@ static void DumpTileChain(UIView *tile) {
             encoding:NSUTF8StringEncoding error:NULL];
 }
 
+// MARK: Edit mode ------------------------------------------------------------
+
+// In edit mode the module background view turns visible (alpha 0 in normal use) and is larger than the module
+// content that shrinks inside it; the stock outline lives there with the stock corner radius, which no longer
+// matches the tweak's rounder tiles. The geometry tells the two cases apart: an expanded module has a
+// background exactly as large as its content.
+static BOOL EditOutlineGeometry(UIView *bg, CGFloat *gap, CGFloat *innerRadius) {
+    if (bg.alpha < 0.05 || !bg.superview) return NO;
+    for (UIView *s in bg.superview.subviews) {
+        if (![NSStringFromClass(s.class) isEqualToString:@"CCUIContentModuleContentContainerView"]) continue;
+        CGSize bs = bg.frame.size, cs = s.frame.size;
+        if (cs.height < 8.0 || bs.height - cs.height < 2.0 || bs.height - cs.height > 40.0) return NO;
+        CGFloat k = cs.height / MAX(1.0, s.bounds.size.height);   // the content's own scale in edit mode
+        *gap = (bs.height - cs.height) / 2.0;
+        *innerRadius = MIN(s.layer.cornerRadius * k, cs.height / 2.0);
+        return YES;
+    }
+    return NO;
+}
+
+static NSString *SublayerSummary(UIView *v) {
+    NSMutableArray *a = [NSMutableArray array];
+    for (CALayer *sl in v.layer.sublayers) {
+        id d = sl.delegate;
+        if ([d isKindOfClass:UIView.class] && ((UIView *)d).superview == v) continue;   // a subview's own layer
+        NSString *c = NSStringFromClass(sl.class);
+        if ([sl isKindOfClass:CAShapeLayer.class]) {
+            CAShapeLayer *sh = (CAShapeLayer *)sl;
+            c = [NSString stringWithFormat:@"%@(lw=%.1f stroke=%d fill=%d)", c, sh.lineWidth, sh.strokeColor != NULL, sh.fillColor != NULL];
+        }
+        [a addObject:[NSString stringWithFormat:@"%@ %@ bw=%.1f r=%.1f", c, NSStringFromCGRect(sl.frame), sl.borderWidth, sl.cornerRadius]];
+    }
+    return a.count ? [a componentsJoinedByString:@"; "] : @"-";
+}
+
+static void EditLine(NSMutableString *o, UIView *v, int depth, int maxDepth, int *budget) {
+    if ((*budget)-- <= 0) return;
+    CALayer *l = v.layer;
+    [o appendFormat:@"%*s%@ f=%@ a=%.2f hid=%d clip=%d r=%.1f bw=%.1f ts=%.3f/%.3f mask=%@ cf=%d filters=%lu layers=%@\n", depth * 2, "",
+     NSStringFromClass(v.class), NSStringFromCGRect(v.frame), v.alpha, v.hidden, l.masksToBounds, l.cornerRadius, l.borderWidth,
+     l.transform.m11, l.transform.m22, l.mask ? NSStringFromClass(l.mask.class) : @"-", l.compositingFilter != nil,
+     (unsigned long)l.filters.count, SublayerSummary(v)];
+    if (depth >= maxDepth) return;
+    for (UIView *s in v.subviews) EditLine(o, s, depth + 1, maxDepth, budget);
+}
+
+// The edit-mode module: its whole subtree, and the views around it (remove button, resize handle, outline).
+static void DumpEditMode(UIView *bg) {
+    if (!gDebugDump) return;
+    static NSMutableString *acc; static int n; static CFTimeInterval last;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - last < 2.0 || n >= 3) return;
+    last = now; n++;
+    if (!acc) acc = [NSMutableString string];
+    UIView *root = bg.superview.superview ?: bg.superview;
+    [acc appendFormat:@"--- edit snapshot %d, module background %@ alpha=%.2f\n", n, NSStringFromCGRect(bg.frame), bg.alpha];
+    int budget = 120;
+    EditLine(acc, root, 0, 7, &budget);
+    UIView *up = root.superview;
+    [acc appendString:@"--- around the module (parent and its other children, depth 1)\n"];
+    if (up) {
+        budget = 40;
+        [acc appendFormat:@"parent %@ f=%@\n", NSStringFromClass(up.class), NSStringFromCGRect(up.frame)];
+        for (UIView *s in up.subviews) EditLine(acc, s, 1, s == root ? 1 : 2, &budget);
+    }
+    [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-edit.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+}
+
 static void ApplyStyle(UIView *v, CCKind kind);
 
 // The expanded volume / mute panel is a 321x360 container holding a 135 pt wide pill (plus a hidden
@@ -1083,6 +1152,18 @@ static BOOL ContainerHoldsVolume(UIView *v) { return HoldsSliderOrVolume(v, 0); 
 static void ApplyStyle(UIView *v, CCKind kind) {
     if (!v.window) return;
     ApplyBackground(v);
+    if (kind == CCKindModuleFill) {
+        CGFloat gap = 0, rin = 0;
+        if (EditOutlineGeometry(v, &gap, &rin)) {   // edit mode: the stock outline, concentric with the tile, nothing of ours on it
+            HideDecor(v);
+            SyncGlass(v, kind, 0.0, IsDarkUI(v), NO);
+            SetMaterialAlpha(v, 0, 1.0);
+            v.layer.cornerCurve = kCACornerCurveContinuous;
+            v.layer.cornerRadius = MIN(rin + gap, MIN(v.bounds.size.width, v.bounds.size.height) / 2.0);
+            DumpEditMode(v);
+            return;
+        }
+    }
     if (kind == CCKindContainer && ContainerHoldsVolume(v)) {
         HideDecor(v);
         SyncGlass(v, kind, 0.0, IsDarkUI(v), NO);
