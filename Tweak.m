@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.12
+// IOS26CCStyle 0.4.13
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -16,11 +16,11 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.12"
+#define XC_VERSION "0.4.13"
 
 // MARK: - Preferences ---------------------------------------------------------
 
-static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion, gShimmer;
+static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion, gPressGrow, gShimmer;
 static double  gPageSpeed = 1.8, gPageFx = 60.0;     // open / close speed (x stock), page effect %
 static double  gSpringK = 380.0, gSpringD = 26.0;   // iOS 27 animation spring (stiffness, damping)
 static BOOL    gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus;
@@ -113,6 +113,7 @@ static void LoadPrefs(void) {
     gContinuous    = PrefBool(@"continuousCorners", YES);
     gExtraBlur     = PrefBool(@"extraBlur", NO);
     gMotion        = PrefBool(@"motion", YES);
+    gPressGrow     = PrefBool(@"pressGrow", YES);
     gShimmer       = PrefBool(@"shimmer", YES);
     gSpringK       = PrefDouble(@"motionStiffness", 380.0, 50.0, 1000.0);
     gSpringD       = PrefDouble(@"motionDamping", 26.0, 2.0, 80.0);
@@ -1429,7 +1430,10 @@ static UIView *PressTarget(UIView *hit, double *scale, BOOL *slider) {
         for (UIView *a = hit; a && a != root.superview && n < 10 && sliderCls; a = a.superview, n++)
             if ([a isKindOfClass:sliderCls]) { sl = YES; break; }
         *slider = sl;
-        *scale = sl ? 1.04 : (MIN(s.width, s.height) > 100.0 ? 0.96 : (fabs(s.width - s.height) < 6.0 ? 0.93 : 0.95));
+        double md = MIN(s.width, s.height);
+        if (sl) *scale = 1.04;
+        else if (gPressGrow) *scale = 1.0 + MIN(0.10, MAX(0.04, 7.0 / md));   // iOS 26: the glass swells under the finger
+        else *scale = md > 100.0 ? 0.96 : (fabs(s.width - s.height) < 6.0 ? 0.93 : 0.95);
         return root;
     }
     // No glass to carry along (the top buttons) or not a tile: the stock buttons keep a squeeze of their own.
@@ -1622,7 +1626,12 @@ static void MotionToggle(UIView *v, BOOL on) {
     if (!gMotion || !gEnabled || !was || was.boolValue == on) return;
     UIView *tile = TileRootFor(v);   // the whole tile pops, not the fill alone
     if (!tile || TileInEditMode(tile)) tile = v;
-    [tile.layer addAnimation:Spring(@"transform.scale", on ? 0.9 : 1.06, 1.0, 8, 240) forKey:@"xc.pop"];
+    double from = on ? 0.9 : 1.06;
+    if (gPressGrow) {   // the tile is swollen under the finger: carry on from there, no jump
+        from = CurrentScale(tile);
+        if (fabs(from - 1.0) < 0.02) from = on ? 1.07 : 0.96;
+    }
+    [tile.layer addAnimation:Spring(@"transform.scale", from, 1.0, 8, 240) forKey:@"xc.pop"];
     if (on && gShimmer) Shimmer(v);
 }
 

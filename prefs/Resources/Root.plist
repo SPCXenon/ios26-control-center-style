@@ -856,6 +856,20 @@
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
+			<string>pressGrow</string>
+			<key>label</key>
+			<string>Tiles swell when pressed (off: squeeze)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
 			<string>takeOverFromLiquidAss</string>
 			<key>label</key>
 			<string>Own Control Center when Liquid (Gl)ass is installed</string>
