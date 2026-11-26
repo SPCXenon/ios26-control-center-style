@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.14
+// IOS26CCStyle 0.4.15
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -16,7 +16,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.14"
+#define XC_VERSION "0.4.15"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -1892,8 +1892,8 @@ static const void *kPageStateKey = &kPageStateKey;
 @property (nonatomic) BOOL armed, released, finger, dirty, dumped;
 @property (nonatomic) CFTimeInterval time;
 // finger flick landing (a spring of our own, see PageSpringBegin)
-@property (nonatomic) BOOL wasTracking, spring, vertical;
-@property (nonatomic) CGFloat vel, shift, sD0, sV0, sT, relaxFrom;
+@property (nonatomic) BOOL wasTracking, spring, pending, vertical;
+@property (nonatomic) CGFloat vel, shift, sD0, sV0, sT, sO0, relaxFrom;
 @property (nonatomic) CFTimeInterval sT0, sLast, relaxT0;
 @property (nonatomic, strong) CADisplayLink *link;
 @end
@@ -1962,9 +1962,9 @@ static void LayoutPages(UIScrollView *sv, NSArray *pages, BOOL vertical, CGFloat
 // iOS 27, measured on the recording (page top edge, frame by frame): a flicked page does not just slow
 // down, it carries on past its place by about 26 pt and eases back over ~0.4 s. That is a spring with
 // w = 11.2 rad/s and damping ratio 0.86, started with the speed of the finger (the fit is within 1 pt).
-// The stock paging deceleration lands flat, so at the lift the scroll view is put on the target page at once
-// and the pages are shifted back by the spring's displacement with a display link; the page effect follows
-// the displayed position.
+// The stock paging deceleration lands flat and slower, so while it runs the pages are drawn where the
+// spring says, by shifting them by the difference with a display link; the page effect follows the
+// displayed position.
 static const double kSpringW = 11.2, kSpringZ = 0.86;
 
 static void SpringEval(double A, double v0, double t, double *d, double *v) {
@@ -1982,7 +1982,7 @@ static void SpringEval(double A, double v0, double t, double *d, double *v) {
 static void PageSpringEnd(UIScrollView *sv, XCPageState *st) {
     NSMutableArray *pages = [NSMutableArray array];
     CollectPages(sv, 0, pages);
-    st.spring = NO; st.shift = 0; st.k = 0; st.finger = NO; st.armed = NO;
+    st.spring = NO; st.pending = NO; st.shift = 0; st.k = 0; st.finger = NO; st.armed = NO;
     [st.link invalidate]; st.link = nil;
     CGSize b = sv.bounds.size;
     CGFloat span = st.vertical ? b.height : b.width;
@@ -1995,66 +1995,68 @@ static void PageSpringEnd(UIScrollView *sv, XCPageState *st) {
     XCPageState *st = sv ? objc_getAssociatedObject(sv, kPageStateKey) : nil;
     if (!st || !st.spring) { [l invalidate]; return; }
     if (sv.tracking) { PageSpringEnd(sv, st); return; }   // a finger took the page again
-    CFTimeInterval now = CACurrentMediaTime(), t = now - st.sT0, dt = MAX(0.001, now - st.sLast);
+    CFTimeInterval now = CACurrentMediaTime();
+    CGFloat dt = MAX(0.001, now - st.sLast);
     st.sLast = now;
+    CGSize b = sv.bounds.size, c = sv.contentSize;
+    CGFloat span = st.vertical ? b.height : b.width;
+    CGFloat o = st.vertical ? sv.contentOffset.y : sv.contentOffset.x;
+    NSMutableArray *pages = [NSMutableArray array];
+    CollectPages(sv, 0, pages);
+
+    if (st.pending) {
+        // The stock deceleration has just begun; it ends on a page boundary in the direction it moves.
+        if (fabs(o - st.sO0) > 1.0) {
+            CGFloat q = o / span, maxOff = MAX(0, st.vertical ? c.height - b.height : c.width - b.width);
+            CGFloat T = ((o > st.sO0) ? ceil(q - 1e-3) : floor(q + 1e-3)) * span;
+            st.sT = MIN(maxOff, MAX(0, T));
+            st.sD0 = o - st.sT;
+            st.sT0 = now;
+            st.pending = NO;
+        } else if (now - st.sT0 > 0.15) { PageSpringEnd(sv, st); return; }   // it did not move on
+        else { LayoutPages(sv, pages, st.vertical, span, o, st.k, 0); return; }
+    }
+
+    CFTimeInterval t = now - st.sT0;
     double d, v;
     SpringEval(st.sD0, st.sV0, t, &d, &v);
-    CGFloat sp = fabs(v);
-    st.shift = -d;
-    BOOL settled = (t > 0.15 && fabs(d) < 0.3 && sp < 8) || t > 1.5;
+    CGFloat sp = fabs(v), disp = st.sT + d;
+    st.shift = o - disp;   // the pages are drawn at `disp`, the scroll view is at `o`
+    BOOL springDone = (t > 0.15 && fabs(d) < 0.3 && sp < 8) || t > 1.5;
+    BOOL landed = fabs(o - st.sT) < 0.3 && !sv.decelerating;
     if (!st.released) {
         st.peak = MAX(st.peak, sp);
         if (sp > 1500) st.armed = YES;
-        if ((st.armed && sp < 320) || settled) { st.released = YES; st.relaxFrom = st.k; st.relaxT0 = now; }
+        if ((st.armed && sp < 320) || springDone) { st.released = YES; st.relaxFrom = st.k; st.relaxT0 = now; }
         else {
             CGFloat target = MIN(1.0, st.peak / 1500.0) * 0.07 * (gPageFx / 100.0) / 0.6;
             st.k += (target - st.k) * (1.0 - exp(-dt / 0.08));
         }
     }
     if (st.released) st.k = st.relaxFrom * MAX(0.0, 1.0 - (now - st.relaxT0) / 0.14);
-    if (settled && st.released && now - st.relaxT0 >= 0.14) { PageSpringEnd(sv, st); return; }
-
-    NSMutableArray *pages = [NSMutableArray array];
-    CollectPages(sv, 0, pages);
-    CGSize b = sv.bounds.size;
-    CGFloat span = st.vertical ? b.height : b.width;
-    LayoutPages(sv, pages, st.vertical, span, st.sT + d, st.k, st.shift);
+    if (springDone && landed && st.released && now - st.relaxT0 >= 0.14) { PageSpringEnd(sv, st); return; }
+    if (t > 2.5) { PageSpringEnd(sv, st); return; }
+    LayoutPages(sv, pages, st.vertical, span, disp, st.k, st.shift);
 }
 @end
 
-// The lift of a finger that leaves the pages moving: choose the page it lands on the way UIKit's paging does
-// (the next one in the direction of a flick, else the nearest), stop the stock deceleration there and start the spring.
+// The lift of a finger that leaves the pages moving. The stock deceleration keeps running (Control Center
+// keeps its pages loaded and visible by it); the pages are drawn where the spring says, by shifting them
+// by the difference. The page the stock deceleration lands on is read from the way it moves.
 static void PageSpringBegin(UIScrollView *sv, XCPageState *st, BOOL vertical, CGFloat span, CGFloat vel) {
-    __weak UIScrollView *ws = sv;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIScrollView *v = ws;
-        if (!v || v.tracking || st.spring) return;
-        CGSize c = v.contentSize, b = v.bounds.size;
-        CGFloat maxOff = MAX(0, (vertical ? c.height - b.height : c.width - b.width));
-        CGFloat o = vertical ? v.contentOffset.y : v.contentOffset.x;
-        CGFloat q = o / span, T;
-        if (fabs(vel) > 300) T = (vel > 0 ? ceil(q - 0.001) : floor(q + 0.001)) * span;
-        else T = round(q) * span;
-        T = MIN(maxOff, MAX(0, T));
-        if (fabs(o - T) < 0.5 && fabs(vel) < 40) return;
-        if (o < -0.5 || o > maxOff + 0.5) return;   // the stock rubber band has it
-        st.vertical = vertical; st.sT = T; st.sD0 = o - T; st.sV0 = vel;
-        st.sT0 = st.sLast = CACurrentMediaTime();
-        st.spring = YES; st.released = NO; st.peak = MAX(st.peak, fabs(vel)); st.armed = fabs(vel) > 1500;
-        st.shift = -(o - T);
-        CGPoint to = vertical ? CGPointMake(v.contentOffset.x, T) : CGPointMake(T, v.contentOffset.y);
-        [v setContentOffset:to animated:NO];   // stops the deceleration
-        id<UIScrollViewDelegate> dg = v.delegate;
-        if ([dg respondsToSelector:@selector(scrollViewDidEndDecelerating:)]) [dg scrollViewDidEndDecelerating:v];
-        NSMutableArray *pages = [NSMutableArray array];
-        CollectPages(v, 0, pages);
-        for (UIView *p in pages) [p.layer removeAnimationForKey:@"xc.relax"];
-        LayoutPages(v, pages, vertical, span, o, st.k, st.shift);
-        XCPageLink *tgt = [XCPageLink new];
-        tgt.sv = v;
-        st.link = [CADisplayLink displayLinkWithTarget:tgt selector:@selector(tick:)];
-        [st.link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-    });
+    NSMutableArray *pages = [NSMutableArray array];
+    CollectPages(sv, 0, pages);
+    for (UIView *p in pages) [p.layer removeAnimationForKey:@"xc.relax"];
+    st.vertical = vertical;
+    st.sO0 = vertical ? sv.contentOffset.y : sv.contentOffset.x;
+    st.sV0 = vel;
+    st.sT0 = st.sLast = CACurrentMediaTime();
+    st.spring = YES; st.pending = YES; st.released = NO; st.shift = 0;
+    st.peak = MAX(st.peak, fabs(vel)); st.armed = fabs(vel) > 1500;
+    XCPageLink *tgt = [XCPageLink new];
+    tgt.sv = sv;
+    st.link = [CADisplayLink displayLinkWithTarget:tgt selector:@selector(tick:)];
+    [st.link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 }
 
 // iOS 27, measured frame by frame on a recording of finger flicks between pages: a page fades with its
