@@ -870,6 +870,20 @@
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>key</key>
+			<string>pageSpring</string>
+			<key>label</key>
+			<string>Pages land with an iOS 27 spring after a flick</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
 			<string>takeOverFromLiquidAss</string>
 			<key>label</key>
 			<string>Own Control Center when Liquid (Gl)ass is installed</string>

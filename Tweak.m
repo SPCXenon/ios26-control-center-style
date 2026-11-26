@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.13
+// IOS26CCStyle 0.4.14
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -16,11 +16,11 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.13"
+#define XC_VERSION "0.4.14"
 
 // MARK: - Preferences ---------------------------------------------------------
 
-static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion, gPressGrow, gShimmer;
+static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion, gPressGrow, gPageSpring, gShimmer;
 static double  gPageSpeed = 1.8, gPageFx = 60.0;     // open / close speed (x stock), page effect %
 static double  gSpringK = 380.0, gSpringD = 26.0;   // iOS 27 animation spring (stiffness, damping)
 static BOOL    gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus;
@@ -114,6 +114,7 @@ static void LoadPrefs(void) {
     gExtraBlur     = PrefBool(@"extraBlur", NO);
     gMotion        = PrefBool(@"motion", YES);
     gPressGrow     = PrefBool(@"pressGrow", YES);
+    gPageSpring    = PrefBool(@"pageSpring", YES);
     gShimmer       = PrefBool(@"shimmer", YES);
     gSpringK       = PrefDouble(@"motionStiffness", 380.0, 50.0, 1000.0);
     gSpringD       = PrefDouble(@"motionDamping", 26.0, 2.0, 80.0);
@@ -1890,6 +1891,11 @@ static const void *kPageStateKey = &kPageStateKey;
 @property (nonatomic) CGFloat off, speed, peak, k;
 @property (nonatomic) BOOL armed, released, finger, dirty, dumped;
 @property (nonatomic) CFTimeInterval time;
+// finger flick landing (a spring of our own, see PageSpringBegin)
+@property (nonatomic) BOOL wasTracking, spring, vertical;
+@property (nonatomic) CGFloat vel, shift, sD0, sV0, sT, relaxFrom;
+@property (nonatomic) CFTimeInterval sT0, sLast, relaxT0;
+@property (nonatomic, strong) CADisplayLink *link;
 @end
 @implementation XCPageState
 @end
@@ -1898,6 +1904,12 @@ static const void *kPageStateKey = &kPageStateKey;
 static CATransform3D PageStretch(BOOL vertical, CGFloat k) {
     CGFloat s = 1.0 + k;
     return vertical ? CATransform3DMakeScale(1.0 / s, s, 1.0) : CATransform3DMakeScale(s, 1.0 / s, 1.0);
+}
+
+static CATransform3D PageXform(BOOL vertical, CGFloat k, CGFloat shift) {
+    CATransform3D t = PageStretch(vertical, k);
+    if (fabs(shift) > 0.01) t = CATransform3DConcat(t, CATransform3DMakeTranslation(vertical ? 0 : shift, vertical ? shift : 0, 0));
+    return t;
 }
 
 // The stretch lets go as the page lands: a straight line back to rest in 140 ms, no swing the other way.
@@ -1921,6 +1933,127 @@ static void SchedulePageSettle(UIScrollView *self) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.055 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UIScrollView *sv = ws;
         if (sv && [objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) ApplyPageScrollTo(sv, YES);
+    });
+}
+
+// Fade by distance from the centre and the stretch, for the scroll position `off` (the displayed one while a
+// landing spring runs) and the landing spring's shift.
+static void LayoutPages(UIScrollView *sv, NSArray *pages, BOOL vertical, CGFloat span, CGFloat off, CGFloat k, CGFloat shift) {
+    CGFloat fx = gPageFx / 100.0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (UIView *p in pages) {
+        CGPoint m = [p.superview convertPoint:p.center toView:sv];
+        CGFloat d = (vertical ? m.y : m.x) - off - span * 0.5;
+        CGFloat a = MIN(1.0, fabs(d / span));
+        CGFloat opacity = 1.0 - 0.83 * fx * a;
+        CALayer *l = p.layer;
+        if (!objc_getAssociatedObject(p, kPageFxKey)) {
+            l.allowsGroupOpacity = NO;   // fade each tile on its own: no offscreen pass over the glass
+            objc_setAssociatedObject(p, kPageFxKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        if (fabs(l.opacity - opacity) > 0.004) l.opacity = opacity;
+        l.transform = PageXform(vertical, k, shift);
+    }
+    [CATransaction commit];
+}
+
+// ---- finger flick landing ---------------------------------------------------------------------
+// iOS 27, measured on the recording (page top edge, frame by frame): a flicked page does not just slow
+// down, it carries on past its place by about 26 pt and eases back over ~0.4 s. That is a spring with
+// w = 11.2 rad/s and damping ratio 0.86, started with the speed of the finger (the fit is within 1 pt).
+// The stock paging deceleration lands flat, so at the lift the scroll view is put on the target page at once
+// and the pages are shifted back by the spring's displacement with a display link; the page effect follows
+// the displayed position.
+static const double kSpringW = 11.2, kSpringZ = 0.86;
+
+static void SpringEval(double A, double v0, double t, double *d, double *v) {
+    double wd = kSpringW * sqrt(1.0 - kSpringZ * kSpringZ), zw = kSpringZ * kSpringW;
+    double B = (v0 + zw * A) / wd, E = exp(-zw * t), C = cos(wd * t), S = sin(wd * t);
+    *d = E * (A * C + B * S);
+    *v = E * (-zw * (A * C + B * S) + wd * (-A * S + B * C));
+}
+
+@interface XCPageLink : NSObject
+@property (nonatomic, weak) UIScrollView *sv;
+- (void)tick:(CADisplayLink *)l;
+@end
+
+static void PageSpringEnd(UIScrollView *sv, XCPageState *st) {
+    NSMutableArray *pages = [NSMutableArray array];
+    CollectPages(sv, 0, pages);
+    st.spring = NO; st.shift = 0; st.k = 0; st.finger = NO; st.armed = NO;
+    [st.link invalidate]; st.link = nil;
+    CGSize b = sv.bounds.size;
+    CGFloat span = st.vertical ? b.height : b.width;
+    LayoutPages(sv, pages, st.vertical, span, st.vertical ? sv.contentOffset.y : sv.contentOffset.x, 0, 0);
+}
+
+@implementation XCPageLink
+- (void)tick:(CADisplayLink *)l {
+    UIScrollView *sv = self.sv;
+    XCPageState *st = sv ? objc_getAssociatedObject(sv, kPageStateKey) : nil;
+    if (!st || !st.spring) { [l invalidate]; return; }
+    if (sv.tracking) { PageSpringEnd(sv, st); return; }   // a finger took the page again
+    CFTimeInterval now = CACurrentMediaTime(), t = now - st.sT0, dt = MAX(0.001, now - st.sLast);
+    st.sLast = now;
+    double d, v;
+    SpringEval(st.sD0, st.sV0, t, &d, &v);
+    CGFloat sp = fabs(v);
+    st.shift = -d;
+    BOOL settled = (t > 0.15 && fabs(d) < 0.3 && sp < 8) || t > 1.5;
+    if (!st.released) {
+        st.peak = MAX(st.peak, sp);
+        if (sp > 1500) st.armed = YES;
+        if ((st.armed && sp < 320) || settled) { st.released = YES; st.relaxFrom = st.k; st.relaxT0 = now; }
+        else {
+            CGFloat target = MIN(1.0, st.peak / 1500.0) * 0.07 * (gPageFx / 100.0) / 0.6;
+            st.k += (target - st.k) * (1.0 - exp(-dt / 0.08));
+        }
+    }
+    if (st.released) st.k = st.relaxFrom * MAX(0.0, 1.0 - (now - st.relaxT0) / 0.14);
+    if (settled && st.released && now - st.relaxT0 >= 0.14) { PageSpringEnd(sv, st); return; }
+
+    NSMutableArray *pages = [NSMutableArray array];
+    CollectPages(sv, 0, pages);
+    CGSize b = sv.bounds.size;
+    CGFloat span = st.vertical ? b.height : b.width;
+    LayoutPages(sv, pages, st.vertical, span, st.sT + d, st.k, st.shift);
+}
+@end
+
+// The lift of a finger that leaves the pages moving: choose the page it lands on the way UIKit's paging does
+// (the next one in the direction of a flick, else the nearest), stop the stock deceleration there and start the spring.
+static void PageSpringBegin(UIScrollView *sv, XCPageState *st, BOOL vertical, CGFloat span, CGFloat vel) {
+    __weak UIScrollView *ws = sv;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIScrollView *v = ws;
+        if (!v || v.tracking || st.spring) return;
+        CGSize c = v.contentSize, b = v.bounds.size;
+        CGFloat maxOff = MAX(0, (vertical ? c.height - b.height : c.width - b.width));
+        CGFloat o = vertical ? v.contentOffset.y : v.contentOffset.x;
+        CGFloat q = o / span, T;
+        if (fabs(vel) > 300) T = (vel > 0 ? ceil(q - 0.001) : floor(q + 0.001)) * span;
+        else T = round(q) * span;
+        T = MIN(maxOff, MAX(0, T));
+        if (fabs(o - T) < 0.5 && fabs(vel) < 40) return;
+        if (o < -0.5 || o > maxOff + 0.5) return;   // the stock rubber band has it
+        st.vertical = vertical; st.sT = T; st.sD0 = o - T; st.sV0 = vel;
+        st.sT0 = st.sLast = CACurrentMediaTime();
+        st.spring = YES; st.released = NO; st.peak = MAX(st.peak, fabs(vel)); st.armed = fabs(vel) > 1500;
+        st.shift = -(o - T);
+        CGPoint to = vertical ? CGPointMake(v.contentOffset.x, T) : CGPointMake(T, v.contentOffset.y);
+        [v setContentOffset:to animated:NO];   // stops the deceleration
+        id<UIScrollViewDelegate> dg = v.delegate;
+        if ([dg respondsToSelector:@selector(scrollViewDidEndDecelerating:)]) [dg scrollViewDidEndDecelerating:v];
+        NSMutableArray *pages = [NSMutableArray array];
+        CollectPages(v, 0, pages);
+        for (UIView *p in pages) [p.layer removeAnimationForKey:@"xc.relax"];
+        LayoutPages(v, pages, vertical, span, o, st.k, st.shift);
+        XCPageLink *tgt = [XCPageLink new];
+        tgt.sv = v;
+        st.link = [CADisplayLink displayLinkWithTarget:tgt selector:@selector(tick:)];
+        [st.link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     });
 }
 
@@ -1954,6 +2087,16 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
         objc_setAssociatedObject(self, kPageStateKey, st, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (!st.dumped) { st.dumped = YES; DumpPageScroll(self); }   // once the view has its real size
+    if (st.spring) return;   // the landing spring (its display link) owns the pages
+    if (gPageSpring && !settle) {
+        UIPanGestureRecognizer *pan = self.panGestureRecognizer;
+        CGFloat pv = pan ? -(vertical ? [pan velocityInView:self].y : [pan velocityInView:self].x) : 0;
+        if (self.tracking) { st.wasTracking = YES; if (fabs(pv) > 1) st.vel = pv; }
+        else if (st.wasTracking) {
+            st.wasTracking = NO;
+            if (self.decelerating) PageSpringBegin(self, st, vertical, span, fabs(pv) > 1 ? pv : st.vel);
+        }
+    }
     if (settle && self.decelerating) { SchedulePageSettle(self); return; }   // a late frame, not a landing
 
     CGFloat off = vertical ? self.contentOffset.y : self.contentOffset.x;
@@ -2000,22 +2143,7 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     if (lands) { st.k = 0; st.released = YES; }
     st.dirty = YES;
 
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    for (UIView *p in pages) {
-        CGPoint m = [p.superview convertPoint:p.center toView:self];
-        CGFloat d = vertical ? (m.y - self.contentOffset.y - span * 0.5) : (m.x - self.contentOffset.x - span * 0.5);
-        CGFloat a = MIN(1.0, fabs(d / span));
-        CGFloat opacity = 1.0 - 0.83 * fx * a;
-        CALayer *l = p.layer;
-        if (!objc_getAssociatedObject(p, kPageFxKey)) {
-            l.allowsGroupOpacity = NO;   // fade each tile on its own: no offscreen pass over the glass
-            objc_setAssociatedObject(p, kPageFxKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-        if (fabs(l.opacity - opacity) > 0.004) l.opacity = opacity;
-        l.transform = PageStretch(vertical, st.k);
-    }
-    [CATransaction commit];
+    LayoutPages(self, pages, vertical, span, off, st.k, st.shift);
     if (lands) ReleasePageStretch(pages, vertical, from);
 
     if (!settle) SchedulePageSettle(self);
