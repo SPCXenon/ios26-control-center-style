@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.11
+// IOS26CCStyle 0.4.12
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -6,6 +6,7 @@
 // (class_addMethod / method_setImplementation). The header pocket (top oval) is
 // intentionally left untouched.
 
+#import <dlfcn.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
@@ -15,7 +16,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.11"
+#define XC_VERSION "0.4.12"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -300,15 +301,13 @@ static UIImage *EdgeImage(CGFloat cap, CGFloat radius, BOOL dark, CGFloat scale)
             StrokeGradient(c, size, radius, rimInset, gRimWidth,
                            RimUID(0.9 * pk * rimE, -1), RimUI(0.11 * rimE), RimUI(0.11 * rimE), RimUID(0.75 * pk * rimE, 1), NO);
             // ... backed by wider soft strokes so the highlight fades inward like a bevel.
-            StrokeGradient(c, size, radius, rimInset, MAX(2.0, bw * 0.55),
-                           RimUID(0.40 * rs * rimE, -1), clear, clear, RimUID(0.30 * rs * rimE, 1), NO);
-            StrokeGradient(c, size, radius, rimInset, MAX(3.5, bw),
-                           RimUID(0.17 * rs * rimE, -1), clear, clear, RimUID(0.12 * rs * rimE, 1), NO);
+            StrokeGradient(c, size, radius, rimInset, MAX(1.6, bw * 0.3),
+                           RimUID(0.20 * rs * rimE, -1), clear, clear, RimUID(0.16 * rs * rimE, 1), NO);
             // iOS 27: broad, soft dispersion bevel. Warm at the top-left / top-right, cool blue-teal at the
             // bottom-right / bottom-left, fading inward, so the whole edge glows instead of a hairline.
             CGFloat dk = 0.4 + 0.6 * MIN(1.0, gDisp);
-            CGFloat da = MIN(0.5, 0.26 * rimE * rs * dk);
-            CGFloat dw = MIN(8.0, MAX(4.0, radius * 0.27));
+            CGFloat da = MIN(0.4, 0.20 * rimE * rs * dk);
+            CGFloat dw = MIN(4.0, MAX(2.5, radius * 0.12));
             // iOS 27.2 reference: lavender at the top-left, cyan-blue at the bottom-right, teal at the top-right, blue at the bottom-left
             UIColor *warm = [UIColor colorWithRed:0.82 green:0.70 blue:1.0 alpha:da];
             UIColor *cool = [UIColor colorWithRed:0.50 green:0.80 blue:1.0 alpha:da];
@@ -317,8 +316,6 @@ static UIImage *EdgeImage(CGFloat cap, CGFloat radius, BOOL dark, CGFloat scale)
             StrokeGradient(c, size, radius, rimInset, dw, warm, clear, clear, cool, NO);
             StrokeGradient(c, size, radius, rimInset, dw, warmS, clear, clear, coolS, YES);
             // the reference has no second hairline inside the first, only a faint refracted trace of it
-            StrokeGradient(c, size, radius, rimInset + gRimWidth + 1.1, 0.55,
-                           RimUI(0.02 * rimE), RimUI(0.09 * rimE), RimUI(0.09 * rimE), RimUI(0.02 * rimE), YES);
         }
         if (wantOutline) {
             UIColor *o = [UIColor colorWithWhite:0.0 alpha:MIN(0.6, (dark ? 0.38 : 0.20) * gEdgeDark)];
@@ -1328,6 +1325,201 @@ static void MotionPress(UIView *v, double target, BOOL down) {
     }
 }
 
+// MARK: Whole-tile press -------------------------------------------------------------------
+// The view that receives a touch is rarely the whole tile. On most tiles the glass and the rim sit next to
+// the touched control view, so scaling that view only squeezed the label, the icon and a toggle's white
+// fill while the glass stayed where it was: only the tiles that carry their own glass seemed to bounce.
+// The press is driven from the window instead. The tile is the view that holds the tile's glass, and that
+// view is scaled, so glass, rim, fill and content move together on every kind of tile.
+
+static const void *kPressTokenKey = &kPressTokenKey;
+static NSUInteger gPressToken;
+
+@interface XCPress : NSObject
+@property (nonatomic, weak) UIView *root;
+@property (nonatomic) CGPoint start;
+@property (nonatomic) BOOL slider, done;
+@end
+@implementation XCPress
+@end
+
+static NSMapTable<UITouch *, XCPress *> *gPresses;
+
+// The nearest view at or above `v` that holds a glass as large as itself.
+static UIView *GlassOwnerOf(UIView *v, int maxUp) {
+    int n = 0;
+    for (UIView *a = v; a && n <= maxUp; a = a.superview, n++) {
+        CGSize as = a.bounds.size;
+        for (UIView *s in a.subviews) {
+            if (![s isKindOfClass:XCGlassView.class]) continue;
+            CGSize gs = s.bounds.size;
+            if (fabs(as.width - gs.width) < 3.0 && fabs(as.height - gs.height) < 3.0) return a;
+        }
+    }
+    return nil;
+}
+
+// Tile-sized: pills, small squares, sliders. Expanded panels and the big media page are not tiles.
+static BOOL TileFits(CGSize s) {
+    return MIN(s.width, s.height) <= 150.0 && s.width * s.height <= 299.0 * 150.0;
+}
+
+// In edit mode (and in an expanded module) the stock outline view behind the content is visible.
+static BOOL TileInEditMode(UIView *root) {
+    UIView *c = root;
+    for (int i = 0; c && i < 5; i++, c = c.superview)
+        if ([NSStringFromClass(c.class) isEqualToString:@"CCUIContentModuleContentContainerView"]) break;
+    if (!c) return NO;
+    for (UIView *s in c.superview.subviews)
+        if ([NSStringFromClass(s.class) isEqualToString:@"CCUIContentModuleBackgroundView"] && s.alpha > 0.05) return YES;
+    return NO;
+}
+
+// The whole tile around a view: the module's content container when it is tile-sized (it carries the rim
+// and holds the glass or the template that does), else the view that holds the glass (the tiles of the
+// connectivity page share one big container and carry their own glass and rim).
+static UIView *TileRootFor(UIView *v) {
+    static Class cont;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cont = NSClassFromString(@"CCUIContentModuleContentContainerView"); });
+    int n = 0;
+    for (UIView *a = v; a && n < 10 && cont; a = a.superview, n++) {
+        if ([a isKindOfClass:cont]) {
+            if (TileFits(a.bounds.size)) return a;
+            break;
+        }
+    }
+    UIView *g = GlassOwnerOf(v, 8);
+    return (g && TileFits(g.bounds.size)) ? g : nil;
+}
+
+static NSString *ChainText(UIView *v, int n) {
+    NSMutableArray *a = [NSMutableArray array];
+    for (UIView *x = v; x && n-- > 0; x = x.superview) [a addObject:NSStringFromClass(x.class)];
+    return [a componentsJoinedByString:@" < "];
+}
+
+static void PressLog(NSString *line) {
+    if (!gDebugDump) return;
+    static NSMutableArray *lines;
+    if (!lines) lines = [NSMutableArray array];
+    [lines addObject:line];
+    if (lines.count > 60) [lines removeObjectAtIndex:0];
+    [[lines componentsJoinedByString:@"\n"] writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-press.txt"
+                                             atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+}
+
+// The view to scale for a touch that landed on `hit`, with the scale it presses to. nil: not a tile.
+static UIView *PressTarget(UIView *hit, double *scale, BOOL *slider) {
+    static Class sliderCls, roundCls, buttonCls, templateCls;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sliderCls = NSClassFromString(@"CCUIContinuousSliderView");
+        roundCls = NSClassFromString(@"CCUIRoundButton");
+        buttonCls = NSClassFromString(@"CCUIButtonModuleView");
+        templateCls = NSClassFromString(@"CCUIControlTemplateView");
+    });
+    *slider = NO;
+    UIView *root = TileRootFor(hit);
+    if (root) {
+        if (TileInEditMode(root)) return nil;
+        CGSize s = root.bounds.size;
+        BOOL sl = NO;
+        int n = 0;
+        for (UIView *a = hit; a && a != root.superview && n < 10 && sliderCls; a = a.superview, n++)
+            if ([a isKindOfClass:sliderCls]) { sl = YES; break; }
+        *slider = sl;
+        *scale = sl ? 1.04 : (MIN(s.width, s.height) > 100.0 ? 0.96 : (fabs(s.width - s.height) < 6.0 ? 0.93 : 0.95));
+        return root;
+    }
+    // No glass to carry along (the top buttons) or not a tile: the stock buttons keep a squeeze of their own.
+    int n = 0;
+    for (UIView *a = hit; a && n < 4; a = a.superview, n++) {
+        if (roundCls && [a isKindOfClass:roundCls]) { *scale = 0.9; return a; }
+        if (buttonCls && [a isKindOfClass:buttonCls]) { *scale = 0.93; return a; }
+        if (templateCls && [a isKindOfClass:templateCls]) { *scale = 0.95; return a; }
+    }
+    return nil;
+}
+
+static void PressUp(UIView *root);
+
+static void PressDown(UIView *root, double target, BOOL slider) {
+    MotionPress(root, target, YES);
+    NSNumber *tok = @(++gPressToken);
+    objc_setAssociatedObject(root, kPressTokenKey, tok, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // never stay squeezed if the end of the touch is missed (the page closes under the finger, say)
+    __weak UIView *guard = root;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((slider ? 20.0 : 2.5) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIView *r = guard;
+        if (r && [objc_getAssociatedObject(r, kPressTokenKey) isEqual:tok]) PressUp(r);
+    });
+    if (slider) return;
+    // iOS lets the squeeze ease off while the finger stays down (and the module's long press then expands it)
+    __weak UIView *weak = root;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIView *r = weak;
+        if (!r || ![objc_getAssociatedObject(r, kPressTokenKey) isEqual:tok]) return;
+        CASpringAnimation *a = Spring(@"transform.scale", CurrentScale(r), 1.0 + (target - 1.0) * 0.65, 22, 180);
+        a.fillMode = kCAFillModeForwards; a.removedOnCompletion = NO;
+        [r.layer addAnimation:a forKey:@"xc.press"];
+    });
+}
+
+static void PressUp(UIView *root) {
+    objc_setAssociatedObject(root, kPressTokenKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    MotionPress(root, 1.0, NO);
+}
+
+static void PressEvent(UIWindow *w, UIEvent *e) {
+    if (!gPresses) gPresses = [NSMapTable weakToStrongObjectsMapTable];
+    for (UITouch *t in [e touchesForWindow:w]) {
+        switch (t.phase) {
+            case UITouchPhaseBegan: {
+                UIView *hit = t.view ?: [w hitTest:[t locationInView:w] withEvent:e];
+                if (!hit) break;
+                double scale = 1.0; BOOL slider = NO;
+                UIView *root = PressTarget(hit, &scale, &slider);
+                if (!root) {
+                    if (gDebugDump && [ChainText(hit, 12) containsString:@"CCUI"])
+                        PressLog([NSString stringWithFormat:@"%.2f no tile: %@", CACurrentMediaTime(), ChainText(hit, 8)]);
+                    break;
+                }
+                XCPress *p = [XCPress new];
+                p.root = root; p.start = [t locationInView:w]; p.slider = slider;
+                [gPresses setObject:p forKey:t];
+                PressDown(root, scale, slider);
+                if (gDebugDump)
+                    PressLog([NSString stringWithFormat:@"%.2f press %@ %@ -> %.2f%@  (hit %@)", CACurrentMediaTime(),
+                              NSStringFromClass(root.class), NSStringFromCGSize(root.bounds.size), scale, slider ? @" slider" : @"", ChainText(hit, 5)]);
+                break;
+            }
+            case UITouchPhaseMoved: {
+                XCPress *p = [gPresses objectForKey:t];
+                if (!p || p.done || p.slider || !p.root) break;
+                CGPoint l = [t locationInView:w];
+                if (hypot(l.x - p.start.x, l.y - p.start.y) > 14.0) { p.done = YES; PressUp(p.root); }   // a scroll or a drag took over
+                break;
+            }
+            case UITouchPhaseEnded:
+            case UITouchPhaseCancelled: {
+                XCPress *p = [gPresses objectForKey:t];
+                if (!p) break;
+                [gPresses removeObjectForKey:t];
+                if (!p.done && p.root) PressUp(p.root);
+                break;
+            }
+            default: break;
+        }
+    }
+}
+
+static void (*orig_win_sendEvent)(UIWindow *, SEL, UIEvent *);
+static void new_win_sendEvent(UIWindow *self, SEL _cmd, UIEvent *e) {
+    if (gMotion && gEnabled && e.type == UIEventTypeTouches) PressEvent(self, e);
+    orig_win_sendEvent(self, _cmd, e);
+}
+
 
 // iOS 26 interactive glass: a soft white light blooms under the finger on the brightness and volume
 // sliders, below their content, and fades when the finger lifts.
@@ -1428,7 +1620,9 @@ static void MotionToggle(UIView *v, BOOL on) {
     NSNumber *was = objc_getAssociatedObject(v, kWasOnKey);
     objc_setAssociatedObject(v, kWasOnKey, @(on), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (!gMotion || !gEnabled || !was || was.boolValue == on) return;
-    [v.layer addAnimation:Spring(@"transform.scale", on ? 0.9 : 1.06, 1.0, 8, 240) forKey:@"xc.pop"];
+    UIView *tile = TileRootFor(v);   // the whole tile pops, not the fill alone
+    if (!tile || TileInEditMode(tile)) tile = v;
+    [tile.layer addAnimation:Spring(@"transform.scale", on ? 0.9 : 1.06, 1.0, 8, 240) forKey:@"xc.pop"];
     if (on && gShimmer) Shimmer(v);
 }
 
@@ -1460,9 +1654,9 @@ static void TouchRefresh(UIView *v) {
     static void (*orig_tb_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_te_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
     static void (*orig_tc_##TAG)(UIView *, SEL, NSSet *, UIEvent *);                          \
-    static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, YES); TouchGlow(self, t, YES); } \
-    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchGlow(self, t, NO); TouchRefresh(self); }  \
-    static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); MotionPress(self, TARGET, NO); TouchGlow(self, t, NO); }  \
+    static void new_tb_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tb_##TAG(self, _cmd, t, e); TouchGlow(self, t, YES); } \
+    static void new_te_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_te_##TAG(self, _cmd, t, e); TouchGlow(self, t, NO); TouchRefresh(self); }  \
+    static void new_tc_##TAG(UIView *self, SEL _cmd, NSSet *t, UIEvent *e) { orig_tc_##TAG(self, _cmd, t, e); TouchGlow(self, t, NO); }  \
     static void InstallTouch_##TAG(const char *cls) {                                         \
         IMP o = NULL;                                                                         \
         if (InstallHook(cls, @selector(touchesBegan:withEvent:), (IMP)new_tb_##TAG, &o)) orig_tb_##TAG = (void (*)(UIView *, SEL, NSSet *, UIEvent *))o;     \
@@ -1875,6 +2069,26 @@ static void PruneOldLogs(void) {
     }
 }
 
+// Liquid (Gl)ass by dylv can be installed next to this tweak. Both style the Control Center, and two styles on
+// one tile fight (double rounding, double glass), so this tweak keeps the Control Center and switches that
+// surface off in Liquid (Gl)ass. Everything else of Liquid (Gl)ass (dock, tab bars, keyboard ...) keeps working.
+static void YieldControlCenterFromLiquidAss(void) {
+    if (!PrefBool(@"takeOverFromLiquidAss", YES)) return;
+    NSString *path = @"/var/mobile/Library/Preferences/dylv.liquidassprefs.plist";
+    BOOL installed = [[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/Library/MobileSubstrate/DynamicLibraries/liquidass.dylib"]
+                  || dlsym(RTLD_DEFAULT, "LGLiquidGlassViewCreate") != NULL;
+    if (!installed) return;
+    NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:path] ?: [NSMutableDictionary dictionary];
+    id cur = d[@"ControlCenter.Enabled"];
+    if ([cur isKindOfClass:NSNumber.class] && ![cur boolValue]) return;   // already off
+    d[@"ControlCenter.Enabled"] = @NO;
+    if ([d writeToFile:path atomically:YES]) {
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                             CFSTR("dylv.liquidassprefs/Reload"), NULL, NULL, YES);
+        NSLog(@"[IOS26CCStyle] Liquid (Gl)ass found: its Control Center surface is switched off");
+    }
+}
+
 __attribute__((constructor))
 static void IOS26CCStyleInit(void) {
     @autoreleasepool {
@@ -1882,6 +2096,9 @@ static void IOS26CCStyleInit(void) {
 
         PruneOldLogs();
         LoadPrefs();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            YieldControlCenterFromLiquidAss();
+        });
 
         Install_ModuleFill  ("CCUIContentModuleBackgroundView");
         Install_Container   ("CCUIContentModuleContentContainerView");
@@ -1897,6 +2114,7 @@ static void IOS26CCStyleInit(void) {
         InstallTouch_ButtonModule("CCUIButtonModuleView");
         InstallTouch_Round("CCUIRoundButton");
         InstallTouch_Slider("CCUIContinuousSliderView");
+        InstallHook("UIWindow", @selector(sendEvent:), (IMP)new_win_sendEvent, (IMP *)&orig_win_sendEvent);
         InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
         InstallHook("UIScrollView", @selector(layoutSubviews), (IMP)new_sv_ls, (IMP *)&orig_sv_ls);
         InstallHook("UIScrollView", NSSelectorFromString(@"_notifyDidScroll"), (IMP)new_sv_nds, (IMP *)&orig_sv_nds);

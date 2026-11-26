@@ -1,4 +1,4 @@
-# iOS 26 Control Center Style 0.4.11
+# iOS 26 Control Center Style 0.4.12
 
 Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 
@@ -19,7 +19,7 @@ Prefs domain `com.xenon.ios26ccstyle`: enabled, styleModules, styleButtons, styl
 
 ## Build
 arm64e needs Apple's linker, so build with GitHub Actions (**Build rootless tweak**, every push). The workflow installs the Theos iOS 16.5 SDK (it contains the private `Preferences` framework stub) and fails if the package has a double `/var/jb` prefix or lacks the prefs bundle.
-Download the `IOS26CCStyle-rootless-deb-v0.4.11` artifact, extract the `.deb`, install with Sileo/Filza, and respring.
+Download the `IOS26CCStyle-rootless-deb-v0.4.12` artifact, extract the `.deb`, install with Sileo/Filza, and respring.
 
 ## Refraction glass (backboardd)
 `backboardd/` is a second tweak injected into `backboardd` that registers a Metal render pass in the render
@@ -30,6 +30,11 @@ Install the package, then do a **userspace reboot / reboot** (a respring does no
 only uses the shader once backboardd wrote `/var/mobile/Library/Accessibility/xenonglass-ready`; otherwise the
 CALayer look is used. After 3 backboardd starts within 60 s the renderer disables itself
 (`xenonglass-backboardd-guard.bin`, `xenonglass-safemode.log`).
+
+### Using it next to Liquid (Gl)ass
+Both can be installed together. This tweak keeps the Control Center and, once at start, switches the
+Control Center surface off in Liquid (Gl)ass (its other surfaces are untouched). Turn "Own Control Center when
+Liquid (Gl)ass is installed" off in the settings to leave that to Liquid (Gl)ass.
 
 ### Credits / license
 The renderer is derived from **Liquid (Gl)ass** by dylv — https://github.com/winaviation-tweaks/liquidass —
