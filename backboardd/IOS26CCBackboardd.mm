@@ -16,6 +16,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <stdlib.h>
+#include <limits.h>
 #include <time.h>
 #include <sys/time.h>
 #include <errno.h>
@@ -35,12 +37,39 @@
 #endif
 #endif
 
-// apparently the only path backboardd could write to outside /tmp/ or /var/jb/*
-#define LG_LOG_PATH "/var/mobile/Library/Accessibility/xenonglass.log"
-#define LG_SAFE_MODE_LOG_PATH "/var/mobile/Library/Accessibility/xenonglass-safemode.log"
-#define LG_SAFE_MODE_STATE_PATH "/var/mobile/Library/Accessibility/xenonglass-backboardd-guard.bin"
-#define LG_SAFE_MODE_PENDING_PATH "/var/mobile/Library/Accessibility/xenonglass-backboardd-alert"
-#define LG_GAUSSIAN_IDENTITY_STATE_PATH "/var/mobile/Library/Accessibility/xenonglass-gaussian-identity-state.bin"
+// 0.4.x wrote its log, crash report and state next to Apple's accessibility data because that was
+// believed to be the only place backboardd may write. They live in a directory of ours now; the old
+// location stays as a fallback for a sandbox profile that refuses it, and SpringBoard looks at both.
+#define LG_LOG_DIR        "/var/mobile/Library/Logs/IOS26CCStyle"
+#define LG_LEGACY_LOG_DIR "/var/mobile/Library/Accessibility"
+
+static char g_lgLogDirectory[PATH_MAX] = {};
+static const char *lgLogDirectory(void) {
+    if (g_lgLogDirectory[0]) return g_lgLogDirectory;
+    // .../Library/Logs itself exists on every iOS; this only adds our folder. backboardd runs as
+    // root, so the folder is opened up for SpringBoard (mobile), which writes its dumps here too.
+    mkdir(LG_LOG_DIR, 0777);
+    chmod(LG_LOG_DIR, 0777);
+    const char *dir = access(LG_LOG_DIR, W_OK) == 0 ? LG_LOG_DIR : LG_LEGACY_LOG_DIR;
+    snprintf(g_lgLogDirectory, sizeof(g_lgLogDirectory), "%s", dir);
+    return g_lgLogDirectory;
+}
+
+// Path of one of our files. The rotating buffers keep every call site an ordinary expression and
+// never more than a handful of these paths are live at the same time.
+extern "C" const char *lgLogPath(const char *name) {
+    static char buffers[8][PATH_MAX];
+    static int slot;
+    char *buffer = buffers[__sync_fetch_and_add(&slot, 1) & 7];
+    snprintf(buffer, PATH_MAX, "%s/%s", lgLogDirectory(), name);
+    return buffer;
+}
+
+#define LG_LOG_PATH                     lgLogPath("xenonglass.log")
+#define LG_SAFE_MODE_LOG_PATH           lgLogPath("xenonglass-safemode.log")
+#define LG_SAFE_MODE_STATE_PATH         lgLogPath("xenonglass-backboardd-guard.bin")
+#define LG_SAFE_MODE_PENDING_PATH       lgLogPath("xenonglass-backboardd-alert")
+#define LG_GAUSSIAN_IDENTITY_STATE_PATH lgLogPath("xenonglass-gaussian-identity-state.bin")
 
 static CFStringRef const kLGSafeModeNotification =
     CFSTR("xenon.liquidass/BackboarddSafeMode");
@@ -58,12 +87,10 @@ static inline void *LGPeek(const void *addr) {
     return value;
 }
 
-static void lgClearAccessibilityFiles(void) {
-    const char *directoryPath = "/var/mobile/Library/Accessibility";
+static void lgClearLogDirectory(void) {
     // keep the last session's log: after a backboardd crash the fresh log would otherwise hide it
-    rename("/var/mobile/Library/Accessibility/xenonglass.log",
-           "/var/mobile/Library/Accessibility/xenonglass-previous.log");
-    DIR *directory = opendir(directoryPath);
+    rename(LG_LOG_PATH, lgLogPath("xenonglass-previous.log"));
+    DIR *directory = opendir(lgLogDirectory());
     if (!directory) return;
 
     struct dirent *entry = NULL;
@@ -73,7 +100,7 @@ static void lgClearAccessibilityFiles(void) {
         if (strstr(entry->d_name, "guard") || strstr(entry->d_name, "safemode") ||
             strstr(entry->d_name, "alert") || strstr(entry->d_name, "previous") || strstr(entry->d_name, "crash")) continue;
         char path[PATH_MAX] = {};
-        snprintf(path, sizeof(path), "%s/%s", directoryPath, entry->d_name);
+        snprintf(path, sizeof(path), "%s/%s", lgLogDirectory(), entry->d_name);
         unlink(path);
     }
     closedir(directory);
@@ -259,7 +286,32 @@ static bool lgShouldEnterSafeMode(void) {
     return false;
 }
 
-bool gLGBackboardDebugLogging = true;
+bool gLGBackboardDebugLogging = false;
+
+// One line is formatted on the caller's thread and appended on a serial background queue. lglog is
+// called from the render pass and from render-server callbacks, where a synchronous
+// fopen/fprintf/fclose costs frames.
+static dispatch_queue_t lgLogQueue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = dispatch_queue_create("com.xenon.ios26ccstyle.backboardd-log",
+                                      DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
+// Appends one complete line. Shared with the symbol resolver (LGSymbolResolver.mm).
+extern "C" void LGDiagAppend(const char *text) {
+    if (!text) return;
+    char *copy = strdup(text);
+    if (!copy) return;
+    dispatch_async(lgLogQueue(), ^{
+        FILE *f = fopen(LG_LOG_PATH, "a");
+        if (f) { fputs(copy, f); fputc('\n', f); fclose(f); }
+        free(copy);
+    });
+}
 
 static void lglog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void lglog(const char *fmt, ...) {
@@ -269,15 +321,16 @@ static void lglog(const char *fmt, ...) {
                      !strncmp(fmt, "resolve", 7) || !strncmp(fmt, "ready", 5) ||
                      !strncmp(fmt, "=====", 5);
     if (!gLGBackboardDebugLogging && !essential) return;
-    FILE *f = fopen(LG_LOG_PATH, "a");
-    if (!f) return;
+    char line[1024] = {};
     struct timeval tv; gettimeofday(&tv, NULL);
-    struct tm *t = localtime(&tv.tv_sec);
-    char ts[32]; strftime(ts, sizeof(ts), "%H:%M:%S", t);
-    fprintf(f, "[LG %s.%03d] ", ts, (int)(tv.tv_usec / 1000));
-    va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
-    fputc('\n', f);
-    fclose(f);
+    struct tm t; localtime_r(&tv.tv_sec, &t);
+    char ts[32]; strftime(ts, sizeof(ts), "%H:%M:%S", &t);
+    int n = snprintf(line, sizeof(line), "[LG %s.%03d] ", ts, (int)(tv.tv_usec / 1000));
+    if (n < 0 || (size_t)n >= sizeof(line)) return;
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(line + n, sizeof(line) - (size_t)n, fmt, ap);
+    va_end(ap);
+    LGDiagAppend(line);
 }
 #import <simd/simd.h>
 #import <mach-o/dyld.h>
@@ -416,8 +469,9 @@ static const bool kIsPACSlice =
 #else
     false;
 #endif
-static const char *kForceHookPath =
-    "/var/mobile/Library/Accessibility/lg_force_hook";
+static const char *lgForceHookPath(void) {
+    return lgLogPath("lg_force_hook");
+}
 
 static id<MTLLibrary>              g_shaderLibrary = nil;
 static id<MTLBuffer>               g_uniformsBuf  = nil;
@@ -438,8 +492,9 @@ static os_unfair_lock g_clockMaskLock = OS_UNFAIR_LOCK_INIT;
 static bool           g_pipelineInit = false;
 static NSInteger      g_osMajorVersion = 0;
 
-static const char *kClockSharedMaskPath =
-    "/var/mobile/Library/Accessibility/xenonglass-clock-mask-shared.bin";
+static const char *lgClockSharedMaskPath(void) {
+    return lgLogPath("xenonglass-clock-mask-shared.bin");
+}
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -1052,7 +1107,7 @@ renderPipelineForFormat(__unsafe_unretained id<MTLDevice> device, MTLPixelFormat
 
 static bool lgEnsureClockSharedMaskMapping(void) {
     if (g_clockSharedMaskMapping != MAP_FAILED) return true;
-    int fd = open(kClockSharedMaskPath, O_RDONLY | O_CLOEXEC);
+    int fd = open(lgClockSharedMaskPath(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
         return false;
     }
@@ -1318,7 +1373,7 @@ static void lgReloadHostPrefs(void) {
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
     NSNumber *debugLogging = prefs[@"Debug.Logging.Enabled"];
     gLGBackboardDebugLogging = [debugLogging isKindOfClass:NSNumber.class]
-        ? debugLogging.boolValue : true;
+        ? debugLogging.boolValue : false;
     NSNumber *fresnelStrength = prefs[@"Renderer.FresnelGlareStrength"];
     g_fresnelGlareStrength = [fresnelStrength isKindOfClass:NSNumber.class]
         ? fminf(1.0f, fmaxf(0.0f, fresnelStrength.floatValue)) : 0.8f;
@@ -2203,7 +2258,7 @@ static bool registerCustomFilter(void) {
 
     g_filterRegistered = true;
     {   // tell SpringBoard the renderer is live (it falls back to plain layers otherwise)
-        int rf = open("/var/mobile/Library/Accessibility/xenonglass-ready",
+        int rf = open(lgLogPath("xenonglass-ready"),
                       O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
         if (rf >= 0) close(rf);
     }
@@ -2228,7 +2283,8 @@ static bool registerCustomFilter(void) {
 #include <sys/ucontext.h>
 #include <mach-o/dyld.h>
 
-#define LG_CRASH_PATH "/var/mobile/Library/Accessibility/xenonglass-crash.log"
+// filled in by lgInstallCrashReporter: the handler must not build paths while it runs
+static char g_crashPath[PATH_MAX] = {};
 struct LGCrashImage { uintptr_t base; char name[32]; };
 static LGCrashImage g_crashImages[1024];
 static int g_crashImageCount = 0;
@@ -2262,7 +2318,8 @@ static void lgCrashAddr(int fd, uint64_t a) {
 }
 static void lgCrashHandler(int sig, siginfo_t *si, void *ucv) {
     ucontext_t *uc = (ucontext_t *)ucv;
-    int fd = open(LG_CRASH_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    int fd = open(g_crashPath[0] ? g_crashPath : "/dev/null",
+                  O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (fd >= 0 && uc && uc->uc_mcontext) {
         lgCrashStr(fd, "==== backboardd crash: signal "); lgCrashDec(fd, sig);
         lgCrashStr(fd, " code "); lgCrashDec(fd, si ? si->si_code : 0);
@@ -2293,17 +2350,29 @@ static void lgCrashHandler(int sig, siginfo_t *si, void *ucv) {
         lgCrashStr(fd, "\n");
         close(fd);
     }
+    // The report is written; now the process has to die. Swallowing SIGSEGV/SIGBUS/SIGILL here left
+    // backboardd running on a corrupted render server and the fault turned up again somewhere else.
+    // Put back whatever was installed before (Apple's own reporter, normally), unblock the signal and
+    // take it again, so it terminates the way the system expects.
     sigaction(sig, &g_crashOld[sig], NULL);
-    if (sig != SIGSEGV && sig != SIGBUS && sig != SIGILL && sig != SIGFPE && sig != SIGTRAP) raise(sig);
+    sigset_t unblocked;
+    sigemptyset(&unblocked);
+    sigaddset(&unblocked, sig);
+    sigprocmask(SIG_UNBLOCK, &unblocked, NULL);
+    raise(sig);
+    signal(sig, SIG_DFL);
+    kill(getpid(), sig);
+    _exit(128 + sig);
 }
 static void lgCrashException(NSException *e) {
-    FILE *f = fopen(LG_CRASH_PATH, "a");
+    FILE *f = fopen(g_crashPath[0] ? g_crashPath : "/dev/null", "a");
     if (!f) return;
     fprintf(f, "==== backboardd uncaught exception %s: %s\n", e.name.UTF8String, e.reason.UTF8String);
     for (NSString *l in e.callStackSymbols) fprintf(f, "  %s\n", l.UTF8String);
     fclose(f);
 }
 static void lgInstallCrashReporter(void) {
+    snprintf(g_crashPath, sizeof(g_crashPath), "%s", lgLogPath("xenonglass-crash.log"));
     uint32_t n = _dyld_image_count();
     for (uint32_t i = 0; i < n && g_crashImageCount < 1024; i++) {
         const char *path = _dyld_get_image_name(i);
@@ -2329,11 +2398,11 @@ static void lgInstallCrashReporter(void) {
 __attribute__((constructor))
 static void tweakInit(void) {
     @autoreleasepool {
-    lgClearAccessibilityFiles();
+    lgClearLogDirectory();
     NSDictionary *bootPrefs = [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
     NSNumber *debugLogging = bootPrefs[@"Debug.Logging.Enabled"];
     gLGBackboardDebugLogging = [debugLogging isKindOfClass:NSNumber.class]
-        ? debugLogging.boolValue : true;
+        ? debugLogging.boolValue : false;
     NSNumber *rendererEnabled = bootPrefs[@"Renderer.Enabled"];
     if ([rendererEnabled isKindOfClass:NSNumber.class] && !rendererEnabled.boolValue) {
         FILE *lf = fopen(LG_LOG_PATH, "w");
@@ -2357,23 +2426,33 @@ static void tweakInit(void) {
     lglog("===== LiquidGlass (backboardd) on iOS %ld.%ld.%ld =====",
           (long)osv.majorVersion, (long)osv.minorVersion, (long)osv.patchVersion);
 
+    // The QuartzCore layouts below are only known for iOS 14-18. 0.4.x extrapolated the offsets
+    // forward ("iOS > 18 keeps the 18 offsets"), which on a new build writes into the render server's
+    // own structures. An unsupported version gets no renderer at all; SpringBoard falls back to the
+    // plain CALayer look because the ready marker never appears.
+    if (osv.majorVersion < 14 || osv.majorVersion > 18) {
+        lglog("init: iOS %ld is not supported by this renderer (built for iOS 14-18), not loading",
+              (long)osv.majorVersion);
+        return;
+    }
+
     g_filterAtomOffset = osv.majorVersion <= 14 ? 0x14 : 0x18;
 
     g_sourceTextureOffset = osv.majorVersion >= 17 ? 0x60 : 0x58;
     g_destinationTextureOffset = osv.majorVersion >= 17 ? 0x60 : 0x58;
     if (osv.majorVersion == 16)
         g_contextDestSurfaceOffset = 0x110;
-    else if (osv.majorVersion == 15 || osv.majorVersion >= 18)
+    else if (osv.majorVersion >= 15 && osv.majorVersion <= 18)
         g_contextDestSurfaceOffset = 0x108;
     else
-        g_contextDestSurfaceOffset = 0xf8;
+        g_contextDestSurfaceOffset = 0xf8;   // iOS 14 and older
     lglog("init: QuartzCore layout filterAtom=%#lx sourceTexture=%#lx destinationTexture=%#lx contextDestination=%#lx",
           (long)g_filterAtomOffset,
           (long)g_sourceTextureOffset, (long)g_destinationTextureOffset,
           (long)g_contextDestSurfaceOffset);
 
     g_useHookPath = kIsPACSlice || g_legacyRenderABI || osv.majorVersion >= 17 ||
-        access(kForceHookPath, F_OK) == 0;
+        access(lgForceHookPath(), F_OK) == 0;
     lglog("init: architecture=%s render registration=%s%s",
           kIsPACSlice ? "arm64e/PAC" : "arm64/non-PAC",
           g_useHookPath ? "genuine-descriptor hook" : "cloned descriptor",

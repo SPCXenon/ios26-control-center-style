@@ -19,8 +19,15 @@
 #endif
 
 #define LG_COVER_SHEET_STATE_MAGIC 0x4c474353u
+// Resolved by the diagnostics directory helper in IOS26CCBackboardd.mm, so this state file moves
+// with the logs (out of Apple's Accessibility directory).
+#ifdef __cplusplus
+extern "C" const char *lgLogPath(const char *name);
+#else
+const char *lgLogPath(const char *name);
+#endif
 static inline const char *LGCoverSheetStatePath(void) {
-    return "/var/mobile/Library/Accessibility/xenonglass-coversheet-state.bin";
+    return lgLogPath("xenonglass-coversheet-state.bin");
 }
 
 typedef struct {

@@ -135,11 +135,52 @@ static void LoadPrefs(void) {
     gEdgeDark      = (CGFloat)PrefDouble(@"edgeDark", 0.35, 0.0, 1.0);
     gBgBlur        = (CGFloat)PrefDouble(@"bgBlur", 1.0, 0.0, 1.0);
     gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.6, 0.0, 1.0);
-    gDebugDump     = PrefBool(@"debugDump", YES);
+    gDebugDump     = PrefBool(@"debugDump", NO);
     gRefract       = PrefBool(@"refraction", YES) && PrefBool(@"Renderer.Enabled", YES);
     gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
     gFillColor     = ColorNamed(PrefString(@"fillColor", @"white"));
     gGeneration++;
+}
+
+// MARK: - Diagnostics ---------------------------------------------------------
+
+// 0.4.x wrote its dumps into Apple's Preferences directory and its renderer files into Apple's
+// Accessibility directory, straight from the layout and touch paths. They go into one directory of
+// ours now, and the writing happens on a serial background queue: those dumps are built from live
+// view trees during layout, and a synchronous file write there cost frames.
+static NSString *LGDiagnosticsDirectory(void) {
+    static NSString *directory;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *preferred = @"/var/mobile/Library/Logs/IOS26CCStyle";
+        [NSFileManager.defaultManager createDirectoryAtPath:preferred
+                                withIntermediateDirectories:YES attributes:nil error:NULL];
+        directory = [NSFileManager.defaultManager isWritableFileAtPath:preferred]
+            ? preferred : @"/var/mobile/Library/Accessibility";   // 0.4.x location, for older sandboxes
+    });
+    return directory;
+}
+
+// Marker files are written by backboardd, which may have had to fall back to the old directory.
+static BOOL LGDiagnosticsMarkerExists(NSString *name) {
+    for (NSString *directory in @[LGDiagnosticsDirectory(), @"/var/mobile/Library/Accessibility"])
+        if ([NSFileManager.defaultManager fileExistsAtPath:
+                [directory stringByAppendingPathComponent:name]]) return YES;
+    return NO;
+}
+
+static void LGWriteDiagnostic(NSString *name, NSString *text) {
+    if (text.length == 0) return;
+    text = [text copy];   // most dumps reuse one mutable buffer; snapshot it before leaving this thread
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = dispatch_queue_create("com.xenon.ios26ccstyle.diagnostics", DISPATCH_QUEUE_SERIAL);
+    });
+    NSString *path = [LGDiagnosticsDirectory() stringByAppendingPathComponent:name];
+    dispatch_async(queue, ^{
+        [text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    });
 }
 
 // MARK: - Styling -------------------------------------------------------------
@@ -664,10 +705,7 @@ static void ApplyBackground(UIView *v) {
     }
     int budget = 1500;
     WalkBg(w, w, 0, &budget, dump);
-    if (dump) {
-        [dump writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-dump.txt" atomically:YES
-                 encoding:NSUTF8StringEncoding error:NULL];
-    }
+    if (dump) LGWriteDiagnostic(@"ios26ccstyle-dump.txt", dump);
 }
 
 // MARK: - Refraction glass (rendered by the backboardd component) --------------
@@ -683,7 +721,7 @@ static BOOL GlassRendererReady(void) {
     CFTimeInterval now = CACurrentMediaTime();
     if (now - last > 2.0) {
         last = now;
-        ready = access("/var/mobile/Library/Accessibility/xenonglass-ready", F_OK) == 0;
+        ready = LGDiagnosticsMarkerExists(@"xenonglass-ready");
     }
     return ready;
 }
@@ -989,8 +1027,7 @@ static void DumpViewOnce(UIView *v, CGFloat radius, const char *tag) {
     [acc appendFormat:@"%s [%@] %@ %@ r=%.1f curve=%@ own-bg=%@ layer-bg=%@\n", tag, st.boolValue ? @"ON" : @"off", NSStringFromClass(v.class), NSStringFromCGRect(v.bounds), radius,
      v.layer.cornerCurve, v.backgroundColor, (__bridge id)v.layer.backgroundColor];
     DumpTree(v, 1, acc);
-    [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt" atomically:YES
-            encoding:NSUTF8StringEncoding error:NULL];
+    LGWriteDiagnostic(@"ios26ccstyle-module-dump.txt", acc);
 }
 
 static void MotionToggle(UIView *v, BOOL on);
@@ -1023,9 +1060,9 @@ static void DumpExpanded(UIView *v) {
     last = now;
     NSMutableString *out = [NSMutableString stringWithFormat:@"%@ %@\n", NSStringFromClass(v.class), NSStringFromCGRect(v.bounds)];
     DumpExpandedTree(v, 1, out);
-    NSString *path = [out containsString:@"NowPlaying"] ? @"/var/mobile/Library/Preferences/ios26ccstyle-expanded-np.txt"
-                                                         : @"/var/mobile/Library/Preferences/ios26ccstyle-expanded-dump.txt";
-    [out writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    NSString *name = [out containsString:@"NowPlaying"] ? @"ios26ccstyle-expanded-np.txt"
+                                                       : @"ios26ccstyle-expanded-dump.txt";
+    LGWriteDiagnostic(name, out);
 }
 
 // Debug: where a Wi-Fi / Bluetooth tile sits in the page and in what order its siblings are drawn,
@@ -1064,8 +1101,7 @@ static void DumpTileChain(UIView *tile) {
         if (i == 0) { for (UIView *s in c.subviews) ChainLine(acc, s, (int)chain.count, tile); }
         else { for (UIView *s in c.subviews) if (s != chain[i - 1]) ChainLine(acc, s, (int)(chain.count - i), tile); }
     }
-    [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-tile-chain.txt" atomically:YES
-            encoding:NSUTF8StringEncoding error:NULL];
+    LGWriteDiagnostic(@"ios26ccstyle-tile-chain.txt", acc);
 }
 
 // MARK: Edit mode ------------------------------------------------------------
@@ -1133,7 +1169,7 @@ static void DumpEditMode(UIView *bg) {
         [acc appendFormat:@"parent %@ f=%@\n", NSStringFromClass(up.class), NSStringFromCGRect(up.frame)];
         for (UIView *s in up.subviews) EditLine(acc, s, 1, s == root ? 1 : 2, &budget);
     }
-    [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-edit.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    LGWriteDiagnostic(@"ios26ccstyle-edit.txt", acc);
 }
 
 static void ApplyStyle(UIView *v, CCKind kind);
@@ -1406,8 +1442,7 @@ static void PressLog(NSString *line) {
     if (!lines) lines = [NSMutableArray array];
     [lines addObject:line];
     if (lines.count > 60) [lines removeObjectAtIndex:0];
-    [[lines componentsJoinedByString:@"\n"] writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-press.txt"
-                                             atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    LGWriteDiagnostic(@"ios26ccstyle-press.txt", [lines componentsJoinedByString:@"\n"]);
 }
 
 // The view to scale for a touch that landed on `hit`, with the scale it presses to. nil: not a tile.
@@ -1839,7 +1874,7 @@ static void new_addAnimation(CALayer *self, SEL _cmd, CAAnimation *anim, NSStrin
     NSString *parent = v.superview ? NSStringFromClass(v.superview.class) : @"-";
     [acc appendFormat:@"%@ (in %@) key=%@ keyPath=%@ %@ dur=%.2f size=%@\n", NSStringFromClass(v.class), parent, key, kp,
      NSStringFromClass(anim.class), anim.duration, NSStringFromCGSize(v.bounds.size)];
-    [acc writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-anim-log.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    LGWriteDiagnostic(@"ios26ccstyle-anim-log.txt", acc);
 }
 
 DEFINE_HOOKS(ModuleFill,   CCKindModuleFill)
@@ -1873,7 +1908,7 @@ static void DumpPageScroll(UIScrollView *sv) {
         [o appendFormat:@"  %@ frame=%@ subviews=%lu\n", NSStringFromClass(p.class), NSStringFromCGRect(p.frame), (unsigned long)p.subviews.count];
         for (UIView *q in p.subviews) [o appendFormat:@"    %@ frame=%@\n", NSStringFromClass(q.class), NSStringFromCGRect(q.frame)];
     }
-    [o writeToFile:@"/var/mobile/Library/Preferences/ios26ccstyle-scroll.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    LGWriteDiagnostic(@"ios26ccstyle-scroll.txt", o);
 }
 
 static void CollectPages(UIView *v, int depth, NSMutableArray *out) {
@@ -2183,10 +2218,12 @@ static void PrefsChanged(CFNotificationCenterRef center, void *observer, CFStrin
 
 // Logs older than one change are deleted. The first run of each version is recorded, and whatever was
 // written before the previous version first ran is removed (a crash report from an old build once
-// outlived six updates). The current backboardd session log (xenonglass.log) is never touched.
+// outlived six updates). The current backboardd session log (xenonglass.log) and the crash-loop guard
+// are never touched.
 static void PruneOldLogs(void) {
     NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *state = @"/var/mobile/Library/Preferences/ios26ccstyle-changes.state";   // "<version> <first run> <previous version's first run>"
+    NSString *dir = LGDiagnosticsDirectory();
+    NSString *state = [dir stringByAppendingPathComponent:@"ios26ccstyle-changes.state"];   // "<version> <first run> <previous version's first run>"
     NSArray *s = [[NSString stringWithContentsOfFile:state encoding:NSUTF8StringEncoding error:nil] componentsSeparatedByString:@" "];
     BOOL known = s.count == 3;
     time_t now = time(NULL), cur = known ? (time_t)[s[1] longLongValue] : now, prev = known ? (time_t)[s[2] longLongValue] : now;
@@ -2195,12 +2232,20 @@ static void PruneOldLogs(void) {
         cur = now;
         [[NSString stringWithFormat:@"%s %ld %ld", XC_VERSION, (long)cur, (long)prev] writeToFile:state atomically:YES encoding:NSUTF8StringEncoding error:nil];
     }
-    NSArray *dirs = @[@[@"/var/mobile/Library/Preferences/", @"ios26ccstyle-", @".txt"],    // view, tile and animation dumps
-                      @[@"/var/mobile/Library/Accessibility/", @"xenonglass-", @".log"]];   // previous session, crash report, safe mode
-    for (NSArray *d in dirs) {
-        for (NSString *n in [fm contentsOfDirectoryAtPath:d[0] error:nil]) {
-            if (![n hasPrefix:d[1]] || ![n hasSuffix:d[2]]) continue;
-            NSString *path = [d[0] stringByAppendingString:n];
+    for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+        if (![n hasPrefix:@"ios26ccstyle-"] && ![n hasPrefix:@"xenonglass-"]) continue;
+        if ([n containsString:@"guard"]) continue;   // an active crash-loop lockout must survive
+        NSString *path = [dir stringByAppendingPathComponent:n];
+        NSDate *m = [fm attributesOfItemAtPath:path error:nil].fileModificationDate;
+        if (m && m.timeIntervalSince1970 < prev) [fm removeItemAtPath:path error:nil];
+    }
+    // 0.4.x left its files in Apple's own directories. Remove what is older than the previous version:
+    // a backboardd that had to fall back to the old location keeps its current session.
+    for (NSString *legacy in @[@"/var/mobile/Library/Preferences", @"/var/mobile/Library/Accessibility"]) {
+        for (NSString *n in [fm contentsOfDirectoryAtPath:legacy error:nil]) {
+            if (![n hasPrefix:@"ios26ccstyle-"] && ![n hasPrefix:@"xenonglass-"]) continue;
+            if ([n containsString:@"guard"]) continue;
+            NSString *path = [legacy stringByAppendingPathComponent:n];
             NSDate *m = [fm attributesOfItemAtPath:path error:nil].fileModificationDate;
             if (m && m.timeIntervalSince1970 < prev) [fm removeItemAtPath:path error:nil];
         }

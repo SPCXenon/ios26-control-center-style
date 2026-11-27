@@ -47,19 +47,22 @@ void *LGSymStripData(void *dataAddr) {
 #endif
 }
 
-#define LG_LOG_PATH "/var/mobile/Library/Accessibility/xenonglass.log"
+// Appends to the shared renderer log; the write itself happens on the log queue (see
+// IOS26CCBackboardd.mm), so scanner chatter does not stall the render thread.
+extern "C" void LGDiagAppend(const char *text);
 static void rlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 extern bool gLGBackboardDebugLogging;
 
 static bool g_forceLog = false;
 static void rlog(const char *fmt, ...) {
     if (!gLGBackboardDebugLogging && !g_forceLog) return;
-    FILE *f = fopen(LG_LOG_PATH, "a");
-    if (!f) return;
-    fputs("[LGSYM] ", f);
-    va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
-    fputc('\n', f);
-    fclose(f);
+    char line[1024] = {};
+    int n = snprintf(line, sizeof(line), "[LGSYM] ");
+    if (n < 0 || (size_t)n >= sizeof(line)) return;
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(line + n, sizeof(line) - (size_t)n, fmt, ap);
+    va_end(ap);
+    LGDiagAppend(line);
 }
 
 static uint8_t  *g_qcTextBase  = nullptr;

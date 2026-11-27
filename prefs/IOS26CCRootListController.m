@@ -88,19 +88,19 @@ static BOOL RunTool(NSArray<NSString *> *paths, NSArray<NSString *> *args) {
 }
 
 - (void)viewLogs {
-    NSString *acc = @"/var/mobile/Library/Accessibility/";
+    NSString *dir = @"/var/mobile/Library/Logs/IOS26CCStyle/";
     NSArray<NSArray<NSString *> *> *files = @[
-        @[@"crash report", [acc stringByAppendingString:@"xenonglass-crash.log"]],
-        @[@"previous session log", [acc stringByAppendingString:@"xenonglass-previous.log"]],
-        @[@"current session log", [acc stringByAppendingString:@"xenonglass.log"]],
-        @[@"view dump", @"/var/mobile/Library/Preferences/ios26ccstyle-module-dump.txt"],
-        @[@"tile chain", @"/var/mobile/Library/Preferences/ios26ccstyle-tile-chain.txt"],
-        @[@"page scroll", @"/var/mobile/Library/Preferences/ios26ccstyle-scroll.txt"],
-        @[@"edit mode", @"/var/mobile/Library/Preferences/ios26ccstyle-edit.txt"],
-        @[@"press", @"/var/mobile/Library/Preferences/ios26ccstyle-press.txt"],
-        @[@"now playing tree", @"/var/mobile/Library/Preferences/ios26ccstyle-expanded-np.txt"],
-        @[@"expanded module tree", @"/var/mobile/Library/Preferences/ios26ccstyle-expanded-dump.txt"],
-        @[@"stock animations", @"/var/mobile/Library/Preferences/ios26ccstyle-anim-log.txt"],
+        @[@"crash report", [dir stringByAppendingString:@"xenonglass-crash.log"]],
+        @[@"previous session log", [dir stringByAppendingString:@"xenonglass-previous.log"]],
+        @[@"current session log", [dir stringByAppendingString:@"xenonglass.log"]],
+        @[@"view dump", [dir stringByAppendingString:@"ios26ccstyle-module-dump.txt"]],
+        @[@"tile chain", [dir stringByAppendingString:@"ios26ccstyle-tile-chain.txt"]],
+        @[@"page scroll", [dir stringByAppendingString:@"ios26ccstyle-scroll.txt"]],
+        @[@"edit mode", [dir stringByAppendingString:@"ios26ccstyle-edit.txt"]],
+        @[@"press", [dir stringByAppendingString:@"ios26ccstyle-press.txt"]],
+        @[@"now playing tree", [dir stringByAppendingString:@"ios26ccstyle-expanded-np.txt"]],
+        @[@"expanded module tree", [dir stringByAppendingString:@"ios26ccstyle-expanded-dump.txt"]],
+        @[@"stock animations", [dir stringByAppendingString:@"ios26ccstyle-anim-log.txt"]],
     ];
     NSMutableString *all = [NSMutableString string];
     for (NSArray<NSString *> *f in files) {
