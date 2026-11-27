@@ -913,7 +913,10 @@ static void RestoreStock(UIView *v) {
     NSNumber *sysMasks = objc_getAssociatedObject(v, kSysMasksKey);
     layer.masksToBounds = sysMasks ? sysMasks.boolValue : NO;
     NSNumber *sysCurve = objc_getAssociatedObject(v, kSysCurveKey);
-    layer.cornerCurve = sysCurve ? (CACornerCurve)sysCurve.integerValue : kCACornerCurveCircular;
+    // The property's enum is CALayerCornerCurve in older SDKs and CACornerCurve in newer ones, so
+    // the type is taken from the property instead of being spelled out here.
+    if (sysCurve) layer.cornerCurve = (typeof(layer.cornerCurve))sysCurve.integerValue;
+    else layer.cornerCurve = kCACornerCurveCircular;
     id sysBg = objc_getAssociatedObject(v, kSysBgKey);
     v.backgroundColor = [sysBg isKindOfClass:UIColor.class] ? (UIColor *)sysBg : nil;
     layer.borderWidth = 0.0;
