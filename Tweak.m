@@ -204,6 +204,10 @@ static const void *kStyledKey = &kStyledKey; // set on views styled through a cl
 static const void *kMenuKey   = &kMenuKey;   // set on views decorated by the menu walk
 static const void *kLastRKey  = &kLastRKey;  // corner radius we applied last
 static const void *kSysRKey   = &kSysRKey;   // corner radius the system had set
+static const void *kSysMasksKey = &kSysMasksKey;   // masksToBounds the system had
+static const void *kSysCurveKey = &kSysCurveKey;   // cornerCurve the system had
+static const void *kSysBgKey    = &kSysBgKey;      // backgroundColor the system had
+static const void *kHookBusyKey = &kHookBusyKey;   // this view is already inside a style hook
 static NSHashTable<UIView *> *gTracked;       // weak; used to restyle after a prefs change
 
 static BOOL KindEnabled(CCKind kind) {
@@ -889,6 +893,36 @@ static void SyncGlass(UIView *v, CCKind kind, CGFloat radius, BOOL dark, BOOL en
     SyncGlassIn(v, want, radius, dark, 0);
 }
 
+// Take a view back to what the system had before we styled it. Switching the tweak off used to
+// hide our decoration and leave the radius, the clip and the fill we had written on the view, so
+// a module stayed a glass capsule with no glass in it. Every value is restored from the copy
+// taken the first time the view was styled.
+static void RestoreStock(UIView *v) {
+    HideDecor(v);
+    // Never styled by us (the tweak is off from the start): the view still has its stock values,
+    // so leave them alone instead of clearing the system's own clip and background.
+    if (!objc_getAssociatedObject(v, kSysMasksKey)) return;
+    UIView *blur = objc_getAssociatedObject(v, kBlurKey);
+    if ([blur isKindOfClass:UIView.class]) {
+        [blur removeFromSuperview];
+        objc_setAssociatedObject(v, kBlurKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CALayer *layer = v.layer;
+    NSNumber *sysR = objc_getAssociatedObject(v, kSysRKey);
+    if (sysR) layer.cornerRadius = sysR.doubleValue;
+    NSNumber *sysMasks = objc_getAssociatedObject(v, kSysMasksKey);
+    layer.masksToBounds = sysMasks ? sysMasks.boolValue : NO;
+    NSNumber *sysCurve = objc_getAssociatedObject(v, kSysCurveKey);
+    layer.cornerCurve = sysCurve ? (CACornerCurve)sysCurve.integerValue : kCACornerCurveCircular;
+    id sysBg = objc_getAssociatedObject(v, kSysBgKey);
+    v.backgroundColor = [sysBg isKindOfClass:UIColor.class] ? (UIColor *)sysBg : nil;
+    layer.borderWidth = 0.0;
+    objc_setAssociatedObject(v, kLastRKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(v, kStyledKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    SyncGlassIn(v, NO, 0.0, IsDarkUI(v), 0);
+    SetMaterialAlpha(v, 0, 1.0);
+}
+
 
 // Enabled (selected) toggles: iOS 18 shows them as a nearly opaque white fill drawn by a
 // child of the button module, which hides the glass behind it. Round it like the shell and
@@ -1191,9 +1225,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     if (kind == CCKindModuleFill) {
         CGFloat gap = 0, rin = 0;
         if (EditOutlineGeometry(v, &gap, &rin)) {   // edit mode: the stock outline, concentric with the tile, nothing of ours on it
-            HideDecor(v);
-            SyncGlass(v, kind, 0.0, IsDarkUI(v), NO);
-            SetMaterialAlpha(v, 0, 1.0);
+            RestoreStock(v);
             v.layer.cornerCurve = kCACornerCurveContinuous;
             v.layer.cornerRadius = MIN(rin + gap, MIN(v.bounds.size.width, v.bounds.size.height) / 2.0);
             DumpEditMode(v);
@@ -1201,17 +1233,13 @@ static void ApplyStyle(UIView *v, CCKind kind) {
         }
     }
     if (kind == CCKindContainer && ContainerHoldsVolume(v)) {
-        HideDecor(v);
-        SyncGlass(v, kind, 0.0, IsDarkUI(v), NO);
-        SetMaterialAlpha(v, 0, 1.0);
+        RestoreStock(v);
         DecorateMenus(v);   // keeps the volume host bare, still styles the stepper buttons
         DumpExpanded(v);
         return;
     }
     if (!gEnabled || !KindEnabled(kind)) {
-        HideDecor(v);
-        SyncGlass(v, kind, 0.0, IsDarkUI(v), NO);
-        SetMaterialAlpha(v, 0, 1.0);
+        RestoreStock(v);
         if (kind == CCKindContainer && gEnabled) DecorateMenus(v);
         return;
     }
@@ -1222,12 +1250,19 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     // Skip the full-page wrapper so no outline is drawn around the whole page.
     if ((kind == CCKindModule || kind == CCKindModuleFill || kind == CCKindContainer) &&
         b.size.height > v.window.bounds.size.height * 0.72) {
-        HideDecor(v);
+        RestoreStock(v);
         if (kind == CCKindContainer) DecorateMenus(v);
         return;
     }
 
     CALayer *layer = v.layer;
+
+    // First styling of this view: keep what the system had so the tweak can be switched off again.
+    if (!objc_getAssociatedObject(v, kSysMasksKey)) {
+        objc_setAssociatedObject(v, kSysMasksKey, @(layer.masksToBounds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(v, kSysCurveKey, @((NSInteger)layer.cornerCurve), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(v, kSysBgKey, v.backgroundColor ?: (id)[NSNull null], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 
     // Remember the radius the system itself uses (expanded modules are rounder than
     // tiles) and never go below it, so inner and outer shapes keep matching.
@@ -1308,15 +1343,30 @@ static BOOL InstallHook(const char *className, SEL sel, IMP replacement, IMP *or
     return orig != NULL;
 }
 
+// The hooked classes are a hierarchy (CCUIButtonModuleView is a CCUIControlTemplateView,
+// CCUISteppedSliderView a CCUIContinuousSliderView, CCUIPowerButton/CCUIAccessoryButton are
+// CCUIRoundButtons), so one layout pass runs both the subclass hook and the inherited superclass
+// hook and every tile was styled twice per pass. The inner hook now only lets the system lay out;
+// the outermost one applies the style, once.
 #define DEFINE_HOOKS(TAG, KIND)                                                     \
     static void (*orig_layout_##TAG)(UIView *, SEL);                                \
     static void new_layout_##TAG(UIView *self, SEL _cmd) {                          \
+        BOOL outer = objc_getAssociatedObject(self, kHookBusyKey) == nil;           \
+        if (outer) objc_setAssociatedObject(self, kHookBusyKey, @YES,               \
+                                            OBJC_ASSOCIATION_RETAIN_NONATOMIC);     \
         orig_layout_##TAG(self, _cmd);                                              \
+        if (!outer) return;                                                         \
+        objc_setAssociatedObject(self, kHookBusyKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); \
         ApplyStyle(self, KIND);                                                     \
     }                                                                               \
     static void (*orig_window_##TAG)(UIView *, SEL);                                \
     static void new_window_##TAG(UIView *self, SEL _cmd) {                          \
+        BOOL outer = objc_getAssociatedObject(self, kHookBusyKey) == nil;           \
+        if (outer) objc_setAssociatedObject(self, kHookBusyKey, @YES,               \
+                                            OBJC_ASSOCIATION_RETAIN_NONATOMIC);     \
         orig_window_##TAG(self, _cmd);                                              \
+        if (!outer) return;                                                         \
+        objc_setAssociatedObject(self, kHookBusyKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); \
         ApplyStyle(self, KIND);                                                     \
         ScheduleReapply(self, KIND);                                                \
     }                                                                               \
@@ -1852,6 +1902,12 @@ static void FollowSizeAnimation(CALayer *layer, CAAnimation *anim) {
 
 static void (*orig_addAnimation)(CALayer *, SEL, CAAnimation *, NSString *);
 static void new_addAnimation(CALayer *self, SEL _cmd, CAAnimation *anim, NSString *key) {
+    // CALayer is hooked process-wide, so every animation in SpringBoard lands here: get out with
+    // two flag tests when there is nothing to retune (motion off, tweak off, or our own keys).
+    if (!gEnabled || (!gMotion && !gDebugDump) || [key hasPrefix:@"xc."]) {
+        orig_addAnimation(self, _cmd, anim, key);
+        return;
+    }
     CAAnimation *use = [key hasPrefix:@"xc."] ? anim : RetuneStockSpring(self, anim);
     orig_addAnimation(self, _cmd, use, key);
     if (gMotion && gEnabled && ![key hasPrefix:@"xc."] && [self.delegate isKindOfClass:UIView.class]) FollowSizeAnimation(self, use);
@@ -1959,15 +2015,25 @@ static void ReleasePageStretch(NSArray *pages, BOOL vertical, CGFloat k) {
 
 static void ApplyPageScrollTo(UIScrollView *self, BOOL settle);
 
-// No scroll callback for 55 ms: the scroll has landed.
+// No scroll callback for 55 ms: the scroll has landed. This runs on every scroll frame, so the
+// pending check is cancelled and replaced instead of a new dispatch_after being queued each time
+// (60 timers a second, all but the last one no-ops, for as long as the finger moves).
+static const void *kPageSettleKey = &kPageSettleKey;
 static void SchedulePageSettle(UIScrollView *self) {
+    dispatch_block_t pending = (dispatch_block_t)objc_getAssociatedObject(self, kPageSettleKey);
+    if (pending) dispatch_block_cancel(pending);
     NSUInteger gen = [objc_getAssociatedObject(self, kPageGenKey) unsignedIntegerValue] + 1;
     objc_setAssociatedObject(self, kPageGenKey, @(gen), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    __weak UIScrollView *ws = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.055 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        UIScrollView *sv = ws;
-        if (sv && [objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) ApplyPageScrollTo(sv, YES);
+    __weak UIScrollView *wself = self;
+    dispatch_block_t block = dispatch_block_create(0, ^{
+        UIScrollView *sv = wself;
+        if (!sv) return;
+        objc_setAssociatedObject(sv, kPageSettleKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if ([objc_getAssociatedObject(sv, kPageGenKey) unsignedIntegerValue] == gen) ApplyPageScrollTo(sv, YES);
     });
+    objc_setAssociatedObject(self, kPageSettleKey, block, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.055 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), block);
 }
 
 // Fade by distance from the centre and the stretch, for the scroll position `off` (the displayed one while a
@@ -2200,10 +2266,19 @@ static void new_sv_nds(UIScrollView *self, SEL _cmd) {
     ApplyPageScroll(self);
 }
 
+static void YieldControlCenterFromLiquidAss(void);
+
 static void PrefsChanged(CFNotificationCenterRef center, void *observer, CFStringRef name,
                          const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
         LoadPrefs();
+        if (!gEnabled) {
+            // Off: put every view we styled back the way the system had it, even if it never lays
+            // out again (an expanded module that stays on screen, say).
+            for (UIView *v in gTracked.allObjects) RestoreStock(v);
+            YieldControlCenterFromLiquidAss();
+            return;
+        }
         for (UIView *v in gTracked.allObjects) {
             if (objc_getAssociatedObject(v, kMenuKey) && !objc_getAssociatedObject(v, kStyledKey)) {
                 ApplyMenuDecor(v);
@@ -2211,6 +2286,7 @@ static void PrefsChanged(CFNotificationCenterRef center, void *observer, CFStrin
             [v setNeedsLayout];
             [v layoutIfNeeded];
         }
+        YieldControlCenterFromLiquidAss();
     });
 }
 
@@ -2255,21 +2331,67 @@ static void PruneOldLogs(void) {
 // Liquid (Gl)ass by dylv can be installed next to this tweak. Both style the Control Center, and two styles on
 // one tile fight (double rounding, double glass), so this tweak keeps the Control Center and switches that
 // surface off in Liquid (Gl)ass. Everything else of Liquid (Gl)ass (dock, tab bars, keyboard ...) keeps working.
+//
+// Written through CFPreferences, not by rewriting dylv.liquidassprefs.plist: the plist is another tweak's
+// data, its process may be writing the same file, and a whole-file rewrite puts back whatever we happened to
+// read. The value we replaced is remembered, so turning "Own Control Center" off (or switching this tweak
+// off) hands the Control Center back instead of leaving Liquid (Gl)ass disabled for good.
+static NSString *const kLiquidAssDomain = @"dylv.liquidassprefs";
+static NSString *const kLiquidAssCCKey = @"ControlCenter.Enabled";
+static NSString *const kLiquidAssSavedKey = @"liquidass.originalControlCenter";
+
+static BOOL LiquidAssInstalled(void) {
+    static BOOL installed;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        installed = [[NSFileManager defaultManager] fileExistsAtPath:
+                        @"/var/jb/Library/MobileSubstrate/DynamicLibraries/liquidass.dylib"]
+                 || dlsym(RTLD_DEFAULT, "LGLiquidGlassViewCreate") != NULL;
+    });
+    return installed;
+}
+
+static id LiquidAssControlCenterValue(void) {
+    CFPreferencesAppSynchronize((__bridge CFStringRef)kLiquidAssDomain);
+    return CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)kLiquidAssCCKey,
+                                                       (__bridge CFStringRef)kLiquidAssDomain));
+}
+
+static void LiquidAssSetControlCenter(id value) {
+    CFPreferencesSetAppValue((__bridge CFStringRef)kLiquidAssCCKey,
+                             (__bridge CFPropertyListRef)value,
+                             (__bridge CFStringRef)kLiquidAssDomain);
+    CFPreferencesAppSynchronize((__bridge CFStringRef)kLiquidAssDomain);
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         CFSTR("dylv.liquidassprefs/Reload"), NULL, NULL, YES);
+}
+
 static void YieldControlCenterFromLiquidAss(void) {
-    if (!PrefBool(@"takeOverFromLiquidAss", YES)) return;
-    NSString *path = @"/var/mobile/Library/Preferences/dylv.liquidassprefs.plist";
-    BOOL installed = [[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/Library/MobileSubstrate/DynamicLibraries/liquidass.dylib"]
-                  || dlsym(RTLD_DEFAULT, "LGLiquidGlassViewCreate") != NULL;
-    if (!installed) return;
-    NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:path] ?: [NSMutableDictionary dictionary];
-    id cur = d[@"ControlCenter.Enabled"];
-    if ([cur isKindOfClass:NSNumber.class] && ![cur boolValue]) return;   // already off
-    d[@"ControlCenter.Enabled"] = @NO;
-    if ([d writeToFile:path atomically:YES]) {
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                             CFSTR("dylv.liquidassprefs/Reload"), NULL, NULL, YES);
-        NSLog(@"[IOS26CCStyle] Liquid (Gl)ass found: its Control Center surface is switched off");
+    if (!LiquidAssInstalled()) return;
+    id saved = CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)kLiquidAssSavedKey,
+                                                           (__bridge CFStringRef)kPrefsDomain));
+    BOOL want = gEnabled && PrefBool(@"takeOverFromLiquidAss", YES);
+    if (!want) {
+        if (!saved) return;   // this tweak never changed it
+        LiquidAssSetControlCenter([saved isKindOfClass:NSNull.class] ? nil : saved);
+        CFPreferencesSetAppValue((__bridge CFStringRef)kLiquidAssSavedKey, NULL,
+                                 (__bridge CFStringRef)kPrefsDomain);
+        CFPreferencesAppSynchronize((__bridge CFStringRef)kPrefsDomain);
+        LGWriteDiagnostic(@"ios26ccstyle-liquidass.txt",
+                          @"own Control Center off: handed the surface back to Liquid (Gl)ass\n");
+        return;
     }
+    id cur = LiquidAssControlCenterValue();
+    if ([cur isKindOfClass:NSNumber.class] && ![cur boolValue]) return;   // already off
+    if (!saved) {   // remember what was there before the first takeover
+        CFPreferencesSetAppValue((__bridge CFStringRef)kLiquidAssSavedKey,
+                                 (__bridge CFPropertyListRef)(cur ?: (id)[NSNull null]),
+                                 (__bridge CFStringRef)kPrefsDomain);
+        CFPreferencesAppSynchronize((__bridge CFStringRef)kPrefsDomain);
+    }
+    LiquidAssSetControlCenter(@NO);
+    LGWriteDiagnostic(@"ios26ccstyle-liquidass.txt",
+                      @"Liquid (Gl)ass found: its Control Center surface is switched off\n");
 }
 
 __attribute__((constructor))
@@ -2299,8 +2421,11 @@ static void IOS26CCStyleInit(void) {
         InstallTouch_Slider("CCUIContinuousSliderView");
         InstallHook("UIWindow", @selector(sendEvent:), (IMP)new_win_sendEvent, (IMP *)&orig_win_sendEvent);
         InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
-        InstallHook("UIScrollView", @selector(layoutSubviews), (IMP)new_sv_ls, (IMP *)&orig_sv_ls);
-        InstallHook("UIScrollView", NSSelectorFromString(@"_notifyDidScroll"), (IMP)new_sv_nds, (IMP *)&orig_sv_nds);
+        // Only the Control Center pager: it was hooked on UIScrollView, so every scroll view in
+        // SpringBoard (home screen, apps, menus) paid for two hooks that then bailed out on the
+        // class-name check in ApplyPageScrollTo.
+        InstallHook("CCUIIconScrollView", @selector(layoutSubviews), (IMP)new_sv_ls, (IMP *)&orig_sv_ls);
+        InstallHook("CCUIIconScrollView", NSSelectorFromString(@"_notifyDidScroll"), (IMP)new_sv_nds, (IMP *)&orig_sv_nds);
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,

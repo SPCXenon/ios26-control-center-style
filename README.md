@@ -2,7 +2,7 @@
 
 Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 
-Hooks only selected Control Center view classes via the ObjC runtime, including the header pocket and module views. Classes missing on the current iOS version are logged and skipped. It does not hook `UIView` globally or change inherited superclass implementations. Runtime class-name checks are cached per class, and style layers are recalculated only when geometry, radius, appearance, or visual preferences change. Layer mutations disable implicit Core Animation actions to avoid layout-time animation drift; the rim is raised above newly added subviews. No CydiaSubstrate dependency. The 0.4.8 source is kept as `old-Tweak-0.4.8.x.txt`.
+Hooks only selected Control Center view classes via the ObjC runtime, including the header pocket and module views. Classes missing on the current iOS version are logged and skipped. It does not hook `UIView` globally or change inherited superclass implementations, and the scroll hooks are installed on the Control Center pager (`CCUIIconScrollView`) rather than on `UIScrollView`. A subclass and its hooked superclass apply the style once per layout pass, not twice. Runtime class-name checks are cached per class, and style layers are recalculated only when geometry, radius, appearance, or visual preferences change. Layer mutations disable implicit Core Animation actions to avoid layout-time animation drift; the rim is raised above newly added subviews. Switching the tweak off restores the system corner radius, clip and fill it had before. No CydiaSubstrate dependency.
 
 ## Glass layers (per module / button / slider)
 Expanded menus (Wi-Fi, Focus, brightness, ...) get the same glass layers: every rounded, clipping view inside a module container is decorated using its own system radius. Switch: "Expanded menus".
@@ -33,10 +33,12 @@ CALayer look is used. After 3 backboardd starts within 60 s the renderer disable
 
 ### Using it next to Liquid (Gl)ass
 Both can be installed together. This tweak keeps the Control Center and, once at start, switches the
-Control Center surface off in Liquid (Gl)ass (its other surfaces are untouched). Turn "Own Control Center when
-Liquid (Gl)ass is installed" off in the settings to leave that to Liquid (Gl)ass.
+Control Center surface off in Liquid (Gl)ass (its other surfaces are untouched). The previous value is
+remembered and put back when "Own Control Center when Liquid (Gl)ass is installed" is turned off or this
+tweak is disabled. The setting is written through CFPreferences, not by rewriting Liquid (Gl)ass's plist.
 
 ### Credits / license
 The renderer is derived from **Liquid (Gl)ass** by dylv — https://github.com/winaviation-tweaks/liquidass —
-licensed **CC BY-NC 4.0**. Non-commercial use only. Changes: renamed filter namespace/files/prefs domain, crash-loop
+licensed **CC BY-NC 4.0**. Non-commercial use only. See [`LICENSE`](LICENSE) for the files covered by that
+license and for the terms of the rest of the source. Changes: renamed filter namespace/files/prefs domain, crash-loop
 guard no longer wiped at start, ready marker, delayed prefs reload. See headers in `backboardd/`.

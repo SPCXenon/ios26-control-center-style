@@ -1296,6 +1296,17 @@ static bool         g_hostParamsInit = false;
 static float        g_fresnelGlareStrength = 0.8f;
 static float        g_coverSheetCornerRadiusPoints = 64.0f;
 
+// Only the Control Center surface is ever attached by SpringBoard (the tweak asks for
+// `xenon.liquidglass.cc.r<n>`); the rest of the Liquid (Gl)ass host table (dock, keyboard, tab
+// bar, alerts, app icons, the prefs widgets ...) is kept so the geometry table and the pref keys
+// stay compatible, but it is not registered. Previously every one of the ~30 hosts interned its
+// base, refresh, dark and 17 radius-step atoms - thousands of filters added to the render
+// server's table at startup for surfaces this package never draws.
+static bool lgHostIsUsed(int host) {
+    if (host <= 0) return true;   // Default: the root descriptor, also the fallback route
+    return strcmp(kHostDefaults[host].prefPrefix, "ControlCenter") == 0;
+}
+
 struct LGRadiusRoute { int host; float radiusRatio; bool dark; };
 static std::unordered_map<uint32_t, LGRadiusRoute> g_radiusRoutes;
 struct LGHostRoute { int host; bool dark; };
@@ -2191,6 +2202,7 @@ static bool registerCustomFilter(void) {
 
     lgStartPrefsObserver();
 
+    int registeredHosts = 1;
     g_hostParams[0].atom = atomId;
     lgRegisterCustomAtom(atomId, registrationDescriptor);
     NSString *rootRefreshName = [[NSString stringWithUTF8String:kHostDefaults[0].typeName]
@@ -2201,6 +2213,8 @@ static bool registerCustomFilter(void) {
         lgRegisterCustomAtom(rootRefreshAtom, registrationDescriptor);
     }
     for (int i = 1; i < kHostCount; i++) {
+        if (!lgHostIsUsed(i)) continue;
+        registeredHosts++;
         uint32_t a = g_internAtom(kHostDefaults[i].typeName);
         g_hostParams[i].atom = a;
         if (a && a != atomId) lgRegisterCustomAtom(a, registrationDescriptor);
@@ -2262,9 +2276,9 @@ static bool registerCustomFilter(void) {
                       O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
         if (rf >= 0) close(rf);
     }
-    lglog("registerCustomFilter: done mode=%s descriptor=%p renderSlot=%d atom=0x%x hosts=%d",
+    lglog("registerCustomFilter: done mode=%s descriptor=%p renderSlot=%d atom=0x%x hosts=%d/%d",
           g_useHookPath ? "hook" : "clone", registrationDescriptor,
-          renderSlot, atomId, kHostCount);
+          renderSlot, atomId, registeredHosts, kHostCount);
 
     CFNotificationCenterPostNotification(
         CFNotificationCenterGetDarwinNotifyCenter(),

@@ -1,0 +1,36 @@
+IOS26CCStyle — licensing
+
+Copyright (c) 2026 SPCXenon.
+
+This package contains two kinds of code, licensed separately.
+
+1. Original code — everything outside backboardd/ that is not listed in section 2
+
+   Copyright (c) 2026 SPCXenon. All rights reserved. No license is granted for this code:
+   it may not be redistributed, modified or used in another product without permission from
+   the copyright holder.
+
+2. Derived renderer — backboardd/IOS26CCBackboardd.mm, backboardd/LGSymbolResolver.mm,
+   backboardd/LGSymbolResolver.h, backboardd/LGHostRegistry.h, backboardd/LGCoverSheetState.h,
+   backboardd/LGLensRectState.h
+
+   Derived from "Liquid (Gl)ass" by dylv — https://github.com/winaviation-tweaks/liquidass —
+   which is licensed under the Creative Commons Attribution-NonCommercial 4.0 International
+   License (CC BY-NC 4.0):
+   https://creativecommons.org/licenses/by-nc/4.0/
+   https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+   You may share and adapt these files for non-commercial purposes only, provided you give
+   appropriate credit to dylv and to this project, link to the license, and indicate the
+   changes made. No additional restrictions may be applied.
+
+   Changes made for this package: the filter namespace, file names and preference domain were
+   renamed to xenon.liquidglass / com.xenon.ios26ccstyle; the crash-loop guard is no longer
+   wiped at start; a ready marker file gates SpringBoard's use of the renderer; the preference
+   reload is delayed; hosts are only registered for the Control Center surface; the crash
+   handler re-raises the signal after writing its report.
+
+   Commercial use of the files in section 2 requires a separate license from the original
+   author, dylv.
+
+The names, logos and trademarks of Apple Inc. and of other projects belong to their owners.
