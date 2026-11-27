@@ -1510,7 +1510,7 @@ static bool lgDebugSampleGrid(void) {
         last = now;
         NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
         id n = d[@"debugSampleGrid"];
-        v = [n isKindOfClass:NSNumber.class] ? n.boolValue : false;
+        v = [n isKindOfClass:NSNumber.class] ? [(NSNumber *)n boolValue] : false;
     }
     return v;
 }
