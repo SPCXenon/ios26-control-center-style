@@ -30,6 +30,52 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
+			<string>One tap sets every look slider at once. iOS 27 Clear is the tuned reference; iOS 26 Frosted is heavier; Old dark is the 0.4.x look (darker tiles, stronger rim).</string>
+			<key>label</key>
+			<string>Presets</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>applyPreset:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>preset</key>
+			<string>ios27</string>
+			<key>label</key>
+			<string>iOS 27 Clear</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>applyPreset:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>preset</key>
+			<string>ios26</string>
+			<key>label</key>
+			<string>iOS 26 Frosted</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>applyPreset:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>preset</key>
+			<string>olddark</string>
+			<key>label</key>
+			<string>Old dark</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>resetDefaults</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Reset all to defaults</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
 			<string>Left: ultra clear (see-through, brighter edges). Right: fully tinted (more contrast). Same idea as iOS 27: Settings &gt; Appearance &gt; Liquid Glass.</string>
 			<key>label</key>
 			<string>Liquid Glass</string>
@@ -44,7 +90,7 @@
 			<key>defaults</key>
 			<string>com.xenon.ios26ccstyle</string>
 			<key>isSegmented</key>
-			<false/>
+			<true/>
 			<key>key</key>
 			<string>glassTint</string>
 			<key>max</key>
@@ -1010,7 +1056,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Off by default; all of it is written to /var/mobile/Library/Logs/IOS26CCStyle. View dump: ios26ccstyle-dump.txt. Renderer log: xenonglass.log (read at backboardd start).</string>
+			<string>On by default. Everything is written to /var/mobile/Library/Logs/IOS26CCStyle: style report (ios26ccstyle-style.txt), frame times (ios26ccstyle-perf.txt), compatibility (ios26ccstyle-compat.txt), view dumps, and the renderer log xenonglass.log. The isolation switches draw only one layer of the look, so a wrong tile can be narrowed down on the phone.</string>
 			<key>label</key>
 			<string>Diagnostics</string>
 		</dict>
@@ -1043,10 +1089,118 @@
 			<string>Renderer debug log</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>debugPerf</string>
+			<key>label</key>
+			<string>Frame-time counters</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>isoDecor</string>
+			<key>label</key>
+			<string>Draw decoration (rim, sheen, highlights)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>isoGlass</string>
+			<key>label</key>
+			<string>Draw refraction glass</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>isoBlur</string>
+			<key>label</key>
+			<string>Extra backdrop blur</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>isoMotion</string>
+			<key>label</key>
+			<string>Motion (springs, page effect)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>debugSampleGrid</string>
+			<key>label</key>
+			<string>Show sampling grid (renderer)</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>showCompatReport</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Compatibility report</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>exportSettings</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Copy settings</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>importSettings</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Paste settings</string>
+		</dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>iOS 26 Control Center Style 0.3.0</string>
+			<string>iOS 26 Control Center Style 0.4.17</string>
 			<key>label</key>
 			<string>About</string>
 		</dict>

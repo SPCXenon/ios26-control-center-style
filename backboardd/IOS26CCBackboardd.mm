@@ -396,6 +396,7 @@ typedef struct {
     float       borderWidthPixels;
     simd_float4 tintColor;
     float       blurPx;
+    float       debugGrid;      // 1 = draw the sampling grid instead of glass (1:1 check)
 } LGUniforms;
 
 // The render entry point has more arguments than the 11 we model. They are passed on the stack and
@@ -563,6 +564,7 @@ struct Uniforms {
     float  borderWidthPixels;
     float4 tintColor;
     float  blurPx;
+    float  debugGrid;
 };
 
 // Disc blur of the refracted backdrop (the glass filter itself carries no radius: a radius pads the
@@ -741,6 +743,14 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
     float2 captureUV = localUV;
     float2 capturePx = localUV * u.resolution;
     float2 px = capturePx;
+    // Verification mode: a 10x10 checker over the sampled source. If the sampling is 1:1 with the
+    // screen, the cells line up with the screen grid; magnification or a shifted capture shows up
+    // immediately as moire or drift against the wallpaper behind the tile.
+    if (u.debugGrid > 0.5) {
+        float2 cell = floor(captureUV * 10.0);
+        float even = fmod(cell.x + cell.y, 2.0);
+        return float4(0.10 + 0.40 * even, 0.90 - 0.50 * even, 0.45, 1.0);
+    }
     float fw = u.resolution.x, fh = u.resolution.y;
     float coverOrientation = isCoverSheet ? -u.useGlyphMask : 0.0;
     if (isCoverSheet && coverOrientation == 2.0) {
@@ -1250,6 +1260,7 @@ static void ensureUniforms(__unsafe_unretained id<MTLDevice> device, uint64_t w,
     u->dispersionStrength      = 5.0f;
     u->fresnelGlareStrength    = 0.5f;
     u->borderWidthPixels       = 2.0f;
+    u->debugGrid               = 0.0f;
     lglog("uniforms buffer allocated (geometry refreshed per-frame)");
 }
 
@@ -1293,6 +1304,17 @@ static_assert(kHostCount == LGHostIdentifierCount, "registry and renderer host o
 static LGHostParams g_hostParams[kHostCount];
 static uint32_t g_darkAtoms[kHostCount];
 static bool         g_hostParamsInit = false;
+
+// The prefs reload rewrites the host table while the render thread reads it. The reload holds this
+// lock for the whole rewrite, and the render path copies the entry it uses under the same lock, so a
+// frame can never see a half-written host (a radius from one build with a bezel from another).
+static os_unfair_lock g_hostLock = OS_UNFAIR_LOCK_INIT;
+
+// Per-surface fail-soft: when a host keeps getting unusable input (a capture torn down mid-animation,
+// a zero-sized surface) it falls back to the stock pass for the rest of the session. One bad surface
+// then costs that surface only, instead of the renderer taking the CALayer look away with it.
+static bool g_hostDisabled[LGHostIdentifierCount];
+static int  g_hostFailures[LGHostIdentifierCount];
 static float        g_fresnelGlareStrength = 0.8f;
 static float        g_coverSheetCornerRadiusPoints = 64.0f;
 
@@ -1394,6 +1416,7 @@ static void lgReloadHostPrefs(void) {
         g_coverSheetCornerRadiusPoints = fmaxf(0.0f, coverSheetCornerRadius.floatValue);
     }
     int overrides = 0;
+    os_unfair_lock_lock(&g_hostLock);
     for (int i = 0; i < kHostCount; i++) {
         uint32_t keepAtom = g_hostParamsInit ? g_hostParams[i].atom : 0;
         uint32_t keepDarkAtom = g_hostParamsInit ? g_darkAtoms[i] : 0;
@@ -1437,6 +1460,7 @@ static void lgReloadHostPrefs(void) {
         }
     }
     g_hostParamsInit = true;
+    os_unfair_lock_unlock(&g_hostLock);
 
     lglog("lgReloadHostPrefs: %s (%d hosts, %d overrides) banner.bezel=%.3f refr=%.2f",
           prefs ? "loaded prefs" : "defaults", kHostCount, overrides,
@@ -1476,6 +1500,43 @@ static float lgGlassBlurPoints(void) {
     return v;
 }
 
+// Debug: draw the sampling grid instead of glass, so the 1:1 mapping of the captured backdrop can be
+// checked against the wallpaper behind a tile.
+static bool lgDebugSampleGrid(void) {
+    static bool v = false;
+    static CFAbsoluteTime last = 0;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - last > 1.5) {
+        last = now;
+        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
+        id n = d[@"debugSampleGrid"];
+        v = [n isKindOfClass:NSNumber.class] ? n.boolValue : false;
+    }
+    return v;
+}
+
+// Which host table entry a (possibly thread-local copy) pointer belongs to, by preference prefix.
+static int lgHostIndexForParams(const LGHostParams *hp) {
+    if (!hp) return 0;
+    for (int i = 0; i < kHostCount; i++)
+        if (strcmp(hp->prefPrefix, kHostDefaults[i].prefPrefix) == 0) return i;
+    return 0;
+}
+
+// Written just before the draw, at most every 2 s: after a crash this says which host and surface the
+// renderer was on, which the session log cannot (it is buffered and truncated by the crash).
+static void lgBreadcrumb(const LGHostParams *hp, uint32_t atom, uint64_t w, uint64_t h, float scale) {
+    static CFAbsoluteTime last;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - last < 2.0) return;
+    last = now;
+    char line[512];
+    snprintf(line, sizeof(line), "%.0f host=%s atom=0x%x src=%llux%llu scale=%.2f\n",
+             now, hp ? hp->prefPrefix : "?", atom, w, h, scale);
+    FILE *f = fopen(lgLogPath("xenonglass-breadcrumb.txt"), "w");
+    if (f) { fputs(line, f); fclose(f); }
+}
+
 static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
                                float opacity, void *surface, float scale,
                                bool flag, void *cm, void *shape, float *out LG_EXTRA_PARAMS)
@@ -1487,6 +1548,17 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
     static uint64_t g_traceCalls = 0;
     uint64_t callN = ++g_traceCalls;
 #define R13TRACE(...) do { if (callN <= 3) lglog(__VA_ARGS__); } while (0)
+    // Hand this surface back to the stock gaussian pass untouched. Used whenever our input or output
+    // is unusable: the tile then looks stock for a frame instead of the whole surface going missing.
+#define LG_PASSTHROUGH() do { \
+        if (g_inLegacyRender && g_origGaussR14) { \
+            g_origGaussR14(self, filter, layer, ctx, opacity, surface, \
+                           0.0f, g_legacyRenderOffset, cm, shape, out); \
+        } else if (g_origGaussR13) { \
+            g_origGaussR13(self, filter, layer, ctx, opacity, surface, \
+                           scale, flag, cm, shape, out LG_EXTRA_ARGS); \
+        } \
+        return; } while (0)
     R13TRACE("R13[%llu] ENTER ctx=%p surface=%p opacity=%.2f scale=%.2f flag=%d",
              callN, ctx, surface, opacity, scale, (int)flag);
 
@@ -1531,6 +1603,13 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
         ? *(uint32_t *)((uint8_t *)filter + g_filterAtomOffset) : 0;
     bool darkTint = false;
     const LGHostParams *hp = lgHostParamsForAtom(ftype, &darkTint);
+    // Render-thread snapshot of the host entry (see g_hostLock).
+    LGHostParams hostCopy;
+    os_unfair_lock_lock(&g_hostLock);
+    hostCopy = *hp;
+    os_unfair_lock_unlock(&g_hostLock);
+    hp = &hostCopy;
+    int hostIndex = lgHostIndexForParams(hp);
     float shortestF = fminf((float)w, (float)h);
 
     auto radiusIt = g_radiusRoutes.find(ftype);
@@ -1551,6 +1630,8 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
                                   : simd_make_float4(hp->tintR, hp->tintG, hp->tintB, hp->tintStrength);
 
     lu.blurPx = !strcmp(hp->prefPrefix, "ControlCenter") ? lgGlassBlurPoints() * pixelsPerPoint : 0.0f;
+    lu.debugGrid = lgDebugSampleGrid() ? 1.0f : 0.0f;
+    lgBreadcrumb(hp, ftype, w, h, scale);
 
     if (!strcmp(hp->prefPrefix, "Keyboard")) {
         static int keyboardGeometryLogs = 0;
@@ -1680,6 +1761,26 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
                   lu.radius);
         }
     }
+
+    // Fail soft, per surface: validate what this host actually resolved to before drawing with it.
+    // A host that keeps getting unusable input falls back to the stock pass for the session.
+    if (g_hostDisabled[hostIndex]) LG_PASSTHROUGH();
+    bool geometryOk = w > 32 && h > 32 && lu.radius >= 0.0f && lu.radius == lu.radius &&
+                      lu.bezelWidth > 0.0f && lu.bezelWidth == lu.bezelWidth;
+    if (!geometryOk) {
+        int failures = __sync_add_and_fetch(&g_hostFailures[hostIndex], 1);
+        if (failures >= 3 && !g_hostDisabled[hostIndex]) {
+            g_hostDisabled[hostIndex] = true;
+            lglog("renderer: host %s disabled for this session after %d unusable surfaces "
+                  "(stock look for that surface, the tweak stays on)", hp->prefPrefix, failures);
+        }
+        static int sBadGeometryLogs = 0;
+        if (__sync_fetch_and_add(&sBadGeometryLogs, 1) < 20)
+            lglog("renderer: host %s skipped, unusable geometry src=%llux%llu radius=%.2f bezel=%.2f",
+                  hp->prefPrefix, w, h, lu.radius, lu.bezelWidth);
+        LG_PASSTHROUGH();
+    }
+    __sync_lock_test_and_set(&g_hostFailures[hostIndex], 0);
 
     if (g_radiusRoutes.find(ftype) != g_radiusRoutes.end()) {
         static int sPrefsGeometryLogs = 0;

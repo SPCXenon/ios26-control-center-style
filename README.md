@@ -15,7 +15,43 @@ A master slider (Settings > iOS 26 CC Style > Liquid Glass) runs from ultra clea
 ## Settings
 Settings → **iOS 26 CC Style** (PreferenceLoader preference bundle). Changes apply live; **Respring** button at the bottom.
 
-Prefs domain `com.xenon.ios26ccstyle`: enabled, styleModules, styleButtons, styleSliders, continuousCorners, sliderCapsule, maxRadius, rimColor, rimIntensity, rimWidth, fillColor, fillTint, sheen, innerRim, glow, extraBlur, bgBlur, reflect, edgeDark, debugDump. Darwin notification: `com.xenon.ios26ccstyle/reload`.
+**Presets** at the top set every look slider at once: *iOS 27 Clear* (the tuned reference state),
+*iOS 26 Frosted*, *Old dark* (the 0.4.x look) and *Reset all*. **Copy settings** / **Paste settings** move the
+whole preference domain as an XML plist, so a look can be reproduced exactly on another device.
+
+Prefs domain `com.xenon.ios26ccstyle`: enabled, styleModules, styleButtons, styleSliders, styleMenus, continuousCorners, sliderCapsule, maxRadius, rimColor, rimIntensity, rimWidth, fillColor, fillTint, sheen, innerRim, glow, extraBlur, bgBlur, reflect, edgeDark, dispersion, glassTint, glassBlurRadius, motion, pageSpring, pageSpeed, pageEffect, isoDecor, isoGlass, isoBlur, isoMotion, debugSampleGrid, debugDump, debugPerf. Darwin notification: `com.xenon.ios26ccstyle/reload`.
+
+## Diagnostics (on by default)
+Everything lands in `/var/mobile/Library/Logs/IOS26CCStyle` and is readable on the phone: **Settings ▸
+iOS 26 CC Style ▸ Open logs** (or **Compatibility report** for the first one).
+
+| File | What it answers |
+|---|---|
+| `ios26ccstyle-compat.txt` | build, device, screen, accessibility state, renderer marker, Liquid (Gl)ass detection, switches, which hooked classes exist |
+| `ios26ccstyle-style.txt` | one line per styled view: class, **profile**, radius, frame, on-screen rect, backdrop luminance, what was drawn |
+| `ios26ccstyle-perf.txt` | calls, average and worst ms for the style pass and the backdrop walk |
+| `ios26ccstyle-scroll.txt`, `-module-dump.txt`, `-tile-chain.txt`, `-expanded-*.txt`, `-edit.txt`, `-press.txt`, `-anim-log.txt` | view trees and animation inventory for the matching surface |
+| `xenonglass.log`, `xenonglass-breadcrumb.txt` | renderer session log, and the last host/surface before a draw (survives a crash) |
+
+**Isolation switches** draw one layer of the look at a time (decoration, refraction glass, extra blur,
+motion); all off is the stock Control Center. **Show sampling grid** makes the renderer draw a 10 × 10
+checker over the sampled backdrop, which proves the 1:1 mapping visually.
+
+## Profiles
+`LGProfile` decides how a view is drawn — `tile`, `slider`, `round`, `menu`, `panel`, `backdrop` — from a
+class table with geometry only as the fallback. The page wrapper and the backdrop of an expanded module
+are `backdrop`: no rim, no glass of ours, the system material stays. The chosen profile is part of the
+style report, so a wrong tile names its own reason.
+
+## Accessibility
+Reduce Motion disables the page spring, the page stretch and the press springs. Reduce Transparency
+switches the tiles to opaque material without refraction glass. Increase Contrast strengthens the rim and
+the dark edge. Low Power Mode drops the purely decorative layers (sheen, corner glints, streak).
+
+## Performance
+`ios26ccstyle-perf.txt` carries a call count, an average and a worst case for the style pass and the
+backdrop walk. The scroll hooks bail out when the Control Center window is not visible, the display link
+is invalidated when its pager goes away, and the backdrop walk is capped and rate limited.
 
 ## Build
 arm64e needs Apple's linker, so build with GitHub Actions (**Build rootless tweak**, every push). The workflow installs the Theos iOS 16.5 SDK (it contains the private `Preferences` framework stub) and fails if the package has a double `/var/jb` prefix or lacks the prefs bundle.

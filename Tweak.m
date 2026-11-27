@@ -13,6 +13,9 @@
 #import <notify.h>
 #import <objc/message.h>
 #include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/sysctl.h>
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
@@ -39,6 +42,11 @@ static CGFloat gDisp;          // chromatic fringe on the rim 0…1
 static CGFloat gBgBlur;        // full-screen backdrop blur: 1 = stock, lower = clearer
 static BOOL    gRefract;       // real refraction glass via the backboardd renderer
 static BOOL    gDebugDump;     // write a view-tree dump (for class-name diagnostics)
+// Diagnostics: isolate one layer of the look. With everything off you get the plain stock Control
+// Center, so a wrong-looking tile can be bisected on the phone instead of in a rebuild.
+static BOOL    gIsoDecor = YES, gIsoGlass = YES, gIsoBlur = YES, gIsoMotion = YES;
+static BOOL    gSampleGrid;    // renderer: draw the sampling grid instead of glass (needs backboardd)
+static BOOL    gPerfLog = YES;  // frame-time counters for the style pass
 static UIColor *gRimColor, *gFillColor;
 static NSUInteger gGeneration; // bumped on every prefs reload
 
@@ -138,7 +146,13 @@ static void LoadPrefs(void) {
     gEdgeDark      = (CGFloat)PrefDouble(@"edgeDark", 0.30, 0.0, 1.0);
     gBgBlur        = (CGFloat)PrefDouble(@"bgBlur", 1.0, 0.0, 1.0);
     gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.5, 0.0, 1.0);
-    gDebugDump     = PrefBool(@"debugDump", NO);
+    gDebugDump     = PrefBool(@"debugDump", YES);   // on by default: a report is what a bug report needs
+    gIsoDecor      = PrefBool(@"isoDecor", YES);
+    gIsoGlass      = PrefBool(@"isoGlass", YES);
+    gIsoBlur       = PrefBool(@"isoBlur", YES);
+    gIsoMotion     = PrefBool(@"isoMotion", YES);
+    gSampleGrid    = PrefBool(@"debugSampleGrid", NO);
+    gPerfLog       = PrefBool(@"debugPerf", YES);
     gRefract       = PrefBool(@"refraction", YES) && PrefBool(@"Renderer.Enabled", YES);
     gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
     gFillColor     = ColorNamed(PrefString(@"fillColor", @"white"));
@@ -186,6 +200,129 @@ static void LGWriteDiagnostic(NSString *name, NSString *text) {
     });
 }
 
+// MARK: - Frame-time counters -------------------------------------------------
+// Every visible layer of this tweak runs inside SpringBoard's layout and scroll paths, so a change can
+// cost frames without looking wrong. These counters are cheap (a clock read around the hot paths)
+// and land in ios26ccstyle-perf.txt, so a slowdown is a number, not a feeling.
+
+typedef struct { const char *name; uint64_t calls; double total, worst; } LGPerfSlot;
+static LGPerfSlot gPerf[8];
+static int gPerfUsed;
+
+static double PerfNowMS(void) { return CACurrentMediaTime() * 1000.0; }
+
+static void PerfAdd(const char *name, double ms) {
+    if (!gPerfLog || ms < 0) return;
+    for (int i = 0; i < gPerfUsed; i++) {
+        if (strcmp(gPerf[i].name, name) != 0) continue;
+        gPerf[i].calls++;
+        gPerf[i].total += ms;
+        if (ms > gPerf[i].worst) gPerf[i].worst = ms;
+        return;
+    }
+    if (gPerfUsed >= 8) return;
+    gPerf[gPerfUsed].name = name;
+    gPerf[gPerfUsed].calls = 1;
+    gPerf[gPerfUsed].total = ms;
+    gPerf[gPerfUsed].worst = ms;
+    gPerfUsed++;
+}
+
+static void PerfFlush(void) {
+    static CFTimeInterval last;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (!gPerfLog || !gPerfUsed || now - last < 2.0) return;
+    last = now;
+    NSMutableString *o = [NSMutableString stringWithFormat:@"ios26ccstyle %s perf (ms)\n", XC_VERSION];
+    for (int i = 0; i < gPerfUsed; i++) {
+        [o appendFormat:@"%-16s calls=%llu avg=%.2f worst=%.2f\n", gPerf[i].name,
+            (unsigned long long)gPerf[i].calls, gPerf[i].calls ? gPerf[i].total / (double)gPerf[i].calls : 0.0,
+            gPerf[i].worst];
+    }
+    LGWriteDiagnostic(@"ios26ccstyle-perf.txt", o);
+}
+
+// MARK: - Accessibility -------------------------------------------------------
+// The system settings that decide how much of this look a user can actually take: Reduce Motion
+// (no springs), Reduce Transparency (opaque material, no glass), Increase Contrast (stronger edge).
+
+static BOOL ReduceMotionOn(void) { return UIAccessibilityIsReduceMotionEnabled(); }
+static BOOL ReduceTransparencyOn(void) { return UIAccessibilityIsReduceTransparencyEnabled(); }
+static BOOL IncreaseContrastOn(void) { return UIAccessibilityDarkerSystemColorsEnabled(); }
+static BOOL LowPowerOn(void) { return NSProcessInfo.processInfo.isLowPowerModeEnabled; }
+
+// Motion: the preference, the isolation switch and Reduce Motion all have to agree.
+static BOOL MotionAllowed(void) { return gEnabled && gMotion && gIsoMotion && !ReduceMotionOn(); }
+
+// MARK: - Backdrop luminance --------------------------------------------------
+// The reference keeps tiles translucent, so how much white a tile needs under its dark label depends
+// on what is behind it. The window under Control Center is rendered once into an 8x8 grid (cheap and
+// capped), then read per tile. 0.5 when it cannot be read, which is what we used before.
+
+static CGFloat gBackLum[8][8];
+static BOOL gBackLumValid;
+static CFTimeInterval gBackLumAt = -100.0;
+
+static UIWindow *WindowBelow(UIWindow *top) {
+    UIWindow *best = nil;
+    for (UIWindow *w in UIApplication.sharedApplication.windows) {
+        if (w == top || w.hidden || w.alpha < 0.01) continue;
+        if (w.windowLevel >= top.windowLevel) continue;
+        if (!best || w.windowLevel > best.windowLevel) best = w;
+    }
+    return best;
+}
+
+static void CaptureBackdropLuminance(UIWindow *cc) {
+    if (!cc) return;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - gBackLumAt < 1.0) return;   // once per open is enough, and it is not free
+    gBackLumAt = now;
+    gBackLumValid = NO;
+    @try {
+        UIWindow *below = WindowBelow(cc);
+        if (!below || below.bounds.size.width < 1) return;
+        UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat preferredFormat];
+        fmt.scale = 1.0;
+        fmt.opaque = YES;
+        UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8, 8) format:fmt];
+        UIImage *img = [r imageWithActions:^(UIGraphicsImageRendererContext *c) {
+            [below drawViewHierarchyInRect:CGRectMake(0, 0, 8, 8) afterScreenUpdates:NO];
+        }];
+        CGImageRef cg = img.CGImage;
+        if (!cg) return;
+        uint8_t px[8 * 8 * 4] = { 0 };
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+        CGContextRef ctx = CGBitmapContextCreate(px, 8, 8, 8, 8 * 4, space, kCGImageAlphaNoneSkipLast);
+        CGColorSpaceRelease(space);
+        if (!ctx) return;
+        CGContextDrawImage(ctx, CGRectMake(0, 0, 8, 8), cg);
+        CGContextRelease(ctx);
+        for (int y = 0; y < 8; y++) {
+            for (int x = 0; x < 8; x++) {
+                const uint8_t *p = px + (y * 8 + x) * 4;
+                gBackLum[y][x] = (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) / 255.0;
+            }
+        }
+        gBackLumValid = YES;
+    } @catch (__unused NSException *e) { gBackLumValid = NO; }
+}
+
+static CGFloat BackdropLuminanceFor(UIView *v) {
+    if (!gBackLumValid || !v.window) return 0.5;
+    CGSize ws = v.window.bounds.size;
+    if (ws.width < 1 || ws.height < 1) return 0.5;
+    CGRect r = [v convertRect:v.bounds toView:v.window];
+    int x0 = (int)MAX(0.0, MIN(7.0, (r.origin.x / ws.width) * 8.0));
+    int y0 = (int)MAX(0.0, MIN(7.0, (r.origin.y / ws.height) * 8.0));
+    int x1 = (int)MAX(0.0, MIN(7.0, (CGRectGetMaxX(r) / ws.width) * 8.0));
+    int y1 = (int)MAX(0.0, MIN(7.0, (CGRectGetMaxY(r) / ws.height) * 8.0));
+    CGFloat sum = 0;
+    int n = 0;
+    for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++) { sum += gBackLum[y][x]; n++; }
+    return n ? sum / (CGFloat)n : 0.5;
+}
+
 // MARK: - Styling -------------------------------------------------------------
 
 typedef NS_ENUM(NSInteger, CCKind) {
@@ -212,6 +349,9 @@ static const void *kSysCurveKey = &kSysCurveKey;   // cornerCurve the system had
 static const void *kSysBgKey    = &kSysBgKey;      // backgroundColor the system had
 static const void *kHookBusyKey = &kHookBusyKey;   // this view is already inside a style hook
 static const void *kKindKey     = &kKindKey;       // the CCKind this view was styled as
+static const void *kProfileKey  = &kProfileKey;    // the LGProfile chosen for it (diagnostics)
+static const void *kOnFillKey   = &kOnFillKey;     // on a system on-fill: its stock backgroundColor
+static const void *kSynthFillKey = &kSynthFillKey; // on a tile: our own fill view
 static NSHashTable<UIView *> *gTracked;       // weak; used to restyle after a prefs change
 
 static BOOL KindEnabled(CCKind kind) {
@@ -320,14 +460,15 @@ static NSUInteger gEdgeCacheGen;
 static UIImage *EdgeImage(CGFloat cap, CGFloat radius, BOOL dark, CGFloat scale) {
     if (!gEdgeCache) gEdgeCache = [NSCache new];
     if (gEdgeCacheGen != gGeneration) { [gEdgeCache removeAllObjects]; gEdgeCacheGen = gGeneration; }
-    NSString *key = [NSString stringWithFormat:@"%.0f|%.1f|%d|%.0f", cap, radius, dark, scale];
+    BOOL contrast = IncreaseContrastOn();   // part of the cache key: the same shape, a stronger edge
+    NSString *key = [NSString stringWithFormat:@"%.0f|%.1f|%d|%.0f|%d", cap, radius, dark, scale, contrast];
     UIImage *img = [gEdgeCache objectForKey:key];
     if (img) return img;
 
     CGFloat S = 2.0 * cap + 2.0;
     CGSize size = CGSizeMake(S, S);
     CGFloat rs   = gReflect * 2.0;
-    CGFloat rimE = MIN(1.0, gRim * gRimMul);
+    CGFloat rimE = MIN(1.0, gRim * gRimMul) * (contrast ? 1.35 : 1.0);
     CGFloat pk   = MIN(1.0, 0.6 + 0.4 * rs);
     BOOL wantOutline = gEdgeDark > 0.001;
     CGFloat rimInset = wantOutline ? 0.7 : 0.0;
@@ -369,7 +510,7 @@ static UIImage *EdgeImage(CGFloat cap, CGFloat radius, BOOL dark, CGFloat scale)
             // the reference has no second hairline inside the first, only a faint refracted trace of it
         }
         if (wantOutline) {
-            UIColor *o = [UIColor colorWithWhite:0.0 alpha:MIN(0.6, (dark ? 0.38 : 0.20) * gEdgeDark)];
+            UIColor *o = [UIColor colorWithWhite:0.0 alpha:MIN(0.8, (dark ? 0.38 : 0.20) * gEdgeDark * (contrast ? 1.5 : 1.0))];
             StrokeGradient(c, size, radius, 0.0, 0.7, o, o, o, o, NO);
         }
     }];
@@ -403,11 +544,14 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     BOOL circle = fabs(b.size.width - b.size.height) < 2.0 && radius >= shortSide / 2.0 - 0.5;
     CGFloat rs = gReflect * 2.0;                 // 0…2, 1 = neutral
 
+    // Low Power: the sheen, the corner glints and the diagonal streak are each a layer for decoration
+    // only, so they are the first thing to drop.
+    BOOL lowPower = LowPowerOn();
     BOOL wantEdges  = gRim > 0.001 || gEdgeDark > 0.001 || gInner > 0.02;
-    BOOL wantSheen  = gSheen > 0.001 && gReflect > 0.001;
-    BOOL wantHot    = gHot > 0.001 && gReflect > 0.001;
-    BOOL wantStreak = gReflect > 0.001;
-    BOOL wantShade  = circle;
+    BOOL wantSheen  = !lowPower && gSheen > 0.001 && gReflect > 0.001;
+    BOOL wantHot    = !lowPower && gHot > 0.001 && gReflect > 0.001;
+    BOOL wantStreak = !lowPower && gReflect > 0.001;
+    BOOL wantShade  = circle && !lowPower;
 
     CGFloat cap = MAX(1.0, MIN(ceil(radius) + 2.0, floor(shortSide / 2.0)));
     CGFloat scale = v.window.screen.scale > 0 ? v.window.screen.scale : UIScreen.mainScreen.scale;
@@ -505,7 +649,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
 // Optional extra backdrop blur behind the module fill (experimental, off by default).
 static void ApplyExtraBlur(UIView *v, CGRect b) {
     UIVisualEffectView *blur = objc_getAssociatedObject(v, kBlurKey);
-    if (!gExtraBlur) {
+    if (!gExtraBlur || !gIsoBlur || ReduceTransparencyOn()) {
         blur.hidden = YES;
         return;
     }
@@ -698,7 +842,7 @@ static void WalkBg(UIView *root, UIWindow *w, int depth, int *budget, NSMutableS
 
 static void ApplyBackground(UIView *v) {
     UIWindow *w = v.window;
-    if (!w) return;
+    if (!w || w.hidden || w.alpha < 0.01) return;   // nothing visible, nothing to blur
     static CFTimeInterval last = 0;
     static NSUInteger lastGen = (NSUInteger)-1, dumpGen = (NSUInteger)-1;
     CFTimeInterval now = CACurrentMediaTime();
@@ -712,7 +856,9 @@ static void ApplyBackground(UIView *v) {
                 NSStringFromCGRect(w.bounds)];
     }
     int budget = 1500;
+    double t0 = PerfNowMS();
     WalkBg(w, w, 0, &budget, dump);
+    PerfAdd("background", PerfNowMS() - t0);
     if (dump) LGWriteDiagnostic(@"ios26ccstyle-dump.txt", dump);
 }
 
@@ -901,8 +1047,33 @@ static void SyncGlass(UIView *v, CCKind kind, CGFloat radius, BOOL dark, BOOL en
 // hide our decoration and leave the radius, the clip and the fill we had written on the view, so
 // a module stayed a glass capsule with no glass in it. Every value is restored from the copy
 // taken the first time the view was styled.
-static void RestoreStock(UIView *v) {
+// Everything of ours below a view: decoration layers, the synthetic fill of a tile and the background
+// colour we wrote on a system on-fill. Restoring only the outermost view used to leave the inner
+// pieces in place, which is how "tweak off, some glass still there" happens.
+static void RestoreDecorTree(UIView *v, int depth) {
+    if (depth > 5) return;
     HideDecor(v);
+    UIView *synth = objc_getAssociatedObject(v, kSynthFillKey);
+    if ([synth isKindOfClass:UIView.class]) {
+        [synth removeFromSuperview];
+        objc_setAssociatedObject(v, kSynthFillKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    id fill = objc_getAssociatedObject(v, kOnFillKey);
+    if (fill) {
+        v.backgroundColor = [fill isKindOfClass:UIColor.class] ? (UIColor *)fill : nil;
+        objc_setAssociatedObject(v, kOnFillKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    objc_setAssociatedObject(v, kMenuKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    for (UIView *s in v.subviews) RestoreDecorTree(s, depth + 1);
+}
+
+static void RestoreStock(UIView *v) {
+    // Our own animations: a press that never ended keeps fillMode forwards and would hold the view
+    // scaled forever; the page stretch/relax animations can outlive a style change.
+    for (NSString *k in [v.layer animationKeys]) {
+        if ([k hasPrefix:@"xc."]) [v.layer removeAnimationForKey:k];
+    }
+    RestoreDecorTree(v, 0);
     // Never styled by us (the tweak is off from the start): the view still has its stock values,
     // so leave them alone instead of clearing the system's own clip and background.
     if (!objc_getAssociatedObject(v, kSysMasksKey)) return;
@@ -936,8 +1107,6 @@ static void RestoreStock(UIView *v) {
 @end
 @implementation XCOnFillView
 @end
-
-static const void *kOnFillKey = &kOnFillKey;   // on the fill view: its stock backgroundColor
 
 static BOOL LooksLikeOnFill(UIView *s, CGSize parent) {
     NSString *n = NSStringFromClass(s.class);
@@ -976,10 +1145,15 @@ static UILabel *FirstLabel(UIView *v, int depth) {
     return nil;
 }
 
-static const void *kSynthFillKey = &kSynthFillKey;   // our own fill view, for tiles with no system fill
-
 // Returns the number of system on-fills that were restyled.
-static CGFloat OnFillAlpha(BOOL dark) { return (dark ? 0.92 : 0.94) - 0.06 * gGlass; }
+// How white the fill has to be is not a constant: a dark label needs a light tile, and the darker the
+// wallpaper behind the tile the more white it takes to keep that label readable. Bright wallpapers
+// therefore get a thinner fill, which is also what the reference looks like.
+static CGFloat OnFillAlpha(UIView *tile, BOOL dark) {
+    CGFloat lum = BackdropLuminanceFor(tile);
+    CGFloat base = (dark ? 0.92 : 0.94) - 0.06 * gGlass;
+    return MIN(0.97, MAX(0.62, base - 0.22 * (lum - 0.35)));
+}
 
 static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
     if (depth > 4) return 0;
@@ -1000,7 +1174,7 @@ static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
             s.layer.cornerRadius = radius;
             s.layer.masksToBounds = YES;
             // iOS 26+ "on" tiles are bright, slightly translucent white glass.
-            CGFloat fa = OnFillAlpha(dark);
+            CGFloat fa = OnFillAlpha(v, dark);
             CGFloat w = 0, ca = 0;
             if (!(s.backgroundColor && [s.backgroundColor getWhite:&w alpha:&ca] && fabs(ca - fa) < 0.005 && w > 0.99)) {
                 s.backgroundColor = [UIColor colorWithWhite:1.0 alpha:fa];
@@ -1048,7 +1222,7 @@ static void SyncSynthFill(UIView *v, CGFloat radius, BOOL dark, BOOL systemFillV
     fill.layer.cornerCurve = gContinuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
     fill.layer.cornerRadius = radius;
     fill.layer.masksToBounds = YES;
-    fill.backgroundColor = [UIColor colorWithWhite:1.0 alpha:OnFillAlpha(dark)];
+    fill.backgroundColor = [UIColor colorWithWhite:1.0 alpha:OnFillAlpha(v, dark)];
 }
 
 // Debug dump of the view hierarchy of each module / round button, once per object.
@@ -1235,6 +1409,95 @@ static BOOL HoldsIconList(UIView *v, int depth) {
     return NO;
 }
 
+// MARK: - Profiles -------------------------------------------------------------
+// What a view is decides how it is drawn: a tile gets glass and a rim, an expanded module's backdrop
+// or a page wrapper gets nothing of ours, a menu row is decorated on its own. This used to be
+// scattered size tests in the style function, and every one of them could silently match the wrong
+// view (the page-1 tiles were page-sized on the first layout pass). The table makes the decision one
+// place, records it for the diagnostics report, and leaves the size rules only as a fallback.
+
+typedef NS_ENUM(NSInteger, LGProfile) {
+    LGProfileTile,      // pill, square, control template
+    LGProfileSlider,    // brightness / volume track
+    LGProfileRound,     // +, power, accessory buttons
+    LGProfileMenu,      // row inside an expanded menu
+    LGProfilePanel,     // expanded module content
+    LGProfileBackdrop,  // page wrapper / expanded module background: bare, stock material only
+};
+
+static const char *LGProfileName(LGProfile p) {
+    switch (p) {
+        case LGProfileTile:     return "tile";
+        case LGProfileSlider:   return "slider";
+        case LGProfileRound:    return "round";
+        case LGProfileMenu:     return "menu";
+        case LGProfilePanel:    return "panel";
+        case LGProfileBackdrop: return "backdrop";
+    }
+    return "?";
+}
+
+static LGProfile LGProfileFor(UIView *v, CCKind kind, CGRect b) {
+    static NSDictionary<NSString *, NSNumber *> *classes;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        classes = @{
+            @"CCUIContinuousSliderView":          @(LGProfileSlider),
+            @"CCUISteppedSliderView":             @(LGProfileSlider),
+            @"CCUIRoundButton":                   @(LGProfileRound),
+            @"CCUIPowerButton":                   @(LGProfileRound),
+            @"CCUIAccessoryButton":               @(LGProfileRound),
+            @"CCUIModuleCollectionView":          @(LGProfileBackdrop),
+            @"CCUIContentModuleBackgroundView":   @(LGProfilePanel),
+            @"CCUIContentModuleContentContainerView": @(LGProfilePanel),
+            @"CCUIControlTemplateView":           @(LGProfileTile),
+            @"CCUIButtonModuleView":              @(LGProfileTile),
+        };
+    });
+    LGProfile p = LGProfileTile;
+    NSNumber *mapped = classes[NSStringFromClass(v.class)];
+    if (mapped) p = (LGProfile)mapped.integerValue;
+    else if (kind == CCKindSlider) p = LGProfileSlider;
+    else if (kind == CCKindRound) p = LGProfileRound;
+
+    // Geometry only as the fallback, and only for the module kinds: a page wrapper or the backdrop of
+    // an expanded module must stay bare whatever its class.
+    if (kind == CCKindModule || kind == CCKindModuleFill || kind == CCKindContainer) {
+        CGSize ws = v.window ? v.window.bounds.size : CGSizeZero;
+        if (ws.height > 1 && b.size.height > ws.height * 0.72) return LGProfileBackdrop;
+        if (ws.height > 1 && b.size.height > ws.height * 0.6 && HoldsIconList(v, 0)) return LGProfileBackdrop;
+        if (p == LGProfileTile && objc_getAssociatedObject(v, kMenuKey)) p = LGProfileMenu;
+        else if (p == LGProfileTile && b.size.height > 240) p = LGProfilePanel;
+    }
+    return p;
+}
+
+// One compact line per view instead of a whole tree: class, profile, size and what was drawn. Read on
+// the phone from Settings > iOS 26 CC Style > Logs, so a screenshot of a wrong tile comes with the
+// reason it was drawn that way.
+static void ReportStyle(UIView *v, LGProfile p, CGFloat radius, BOOL glass, BOOL decor) {
+    if (!gDebugDump) return;
+    static NSMutableString *acc;
+    static CFTimeInterval last, lastVisit;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - lastVisit < 0.25) return;   // this runs in the layout path: a few lines a second is plenty
+    lastVisit = now;
+    if (!acc) acc = [NSMutableString string];
+    if ([acc length] > 60000) [acc setString:@""];   // a stuck loop must not fill the disk
+    CGFloat lum = BackdropLuminanceFor(v);
+    BOOL dark = IsDarkUI(v);
+    [acc appendFormat:@"%@ %s r=%.1f f=%@ on=%@ lum=%.2f %@%@%@%@\n",
+        NSStringFromClass(v.class), LGProfileName(p), radius, NSStringFromCGRect(v.frame),
+        NSStringFromCGRect([v convertRect:v.bounds toView:v.window]), lum,
+        dark ? @"dark" : @"light", glass ? @" glass" : @"", decor ? @" decor" : @"",
+        ReduceTransparencyOn() ? @" reduce-transparency" : @""];
+    if (now - last < 1.0) return;
+    last = now;
+    [acc appendString:@"-----\n"];
+    LGWriteDiagnostic(@"ios26ccstyle-style.txt", acc);
+    [acc setString:@""];
+}
+
 static void ApplyStyle(UIView *v, CCKind kind) {
     if (!v.window) return;
     ApplyBackground(v);
@@ -1263,19 +1526,25 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     CGRect b = v.bounds;
     if (b.size.width < 4.0 || b.size.height < 4.0) return;
 
-    // Skip the page wrapper and the backdrop of an expanded module: no rim, no glass of ours, the
-    // system's own material stays. This has to stay a size test. Page 1's tiles are transiently
-    // page-sized on the first layout pass, so they are skipped then too; the pager restyles them at
-    // their real size once the open animation has run (ScheduleStyleSettle), which is the fix for the
-    // first open. Loosening this test instead drew a rim and glass around whole pages.
-    if ((kind == CCKindModule || kind == CCKindModuleFill || kind == CCKindContainer) && v.window) {
-        CGSize ws = v.window.bounds.size;
-        if (b.size.height > ws.height * 0.72 || (b.size.height > ws.height * 0.6 && HoldsIconList(v, 0))) {
-            RestoreStock(v);
-            if (kind == CCKindContainer) DecorateMenus(v);
-            return;
-        }
+    double perfStart = PerfNowMS();
+    LGProfile profile = LGProfileFor(v, kind, b);
+    objc_setAssociatedObject(v, kProfileKey, @(profile), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    // The page wrapper and the backdrop of an expanded module stay bare: the system's own material,
+    // no rim and no glass of ours. Page 1's tiles are transiently page-sized on the first layout pass
+    // and are classified as a backdrop then too; the pager restyles them at their real size once the
+    // open animation has run (ScheduleStyleSettle), which is the fix for the first open.
+    if (profile == LGProfileBackdrop) {
+        RestoreStock(v);
+        if (kind == CCKindContainer) DecorateMenus(v);
+        ReportStyle(v, profile, 0, NO, NO);
+        PerfAdd("style.backdrop", PerfNowMS() - perfStart);
+        return;
     }
+
+    // Reduce Transparency: the shape stays, the translucency goes. Apple's own Control Center turns
+    // opaque under that setting, and a see-through tile there reads as broken.
+    BOOL opaque = ReduceTransparencyOn();
 
     CALayer *layer = v.layer;
 
@@ -1312,12 +1581,13 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     layer.borderWidth   = 0.0;
 
     BOOL darkUI = IsDarkUI(v);
-    SetMaterialAlpha(v, 0, darkUI ? gMatAlpha : MAX(gMatAlpha, 0.6));
-    SyncGlass(v, kind, r, darkUI, YES);
-    BOOL glassOn = gRefract && GlassRendererReady();
+    SetMaterialAlpha(v, 0, opaque ? 1.0 : (darkUI ? gMatAlpha : MAX(gMatAlpha, 0.6)));
+    BOOL glassWanted = gIsoGlass && !opaque;
+    SyncGlass(v, kind, r, darkUI, glassWanted);
+    BOOL glassOn = glassWanted && gRefract && GlassRendererReady();
 
     if (kind == CCKindModuleFill) {
-        CGFloat ft = glassOn ? 0.0 : (darkUI ? gEffTint * 0.2 : gEffTint * 0.85);
+        CGFloat ft = opaque ? 0.55 : (glassOn ? 0.0 : (darkUI ? gEffTint * 0.2 : gEffTint * 0.85));
         v.backgroundColor = ft > 0.001 ? [gFillColor colorWithAlphaComponent:ft] : nil;
         ApplyExtraBlur(v, b);
     }
@@ -1325,12 +1595,18 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     if (kind == CCKindModule) { StyleOnFillsTop(v, r, darkUI); DumpTileChain(v); }
     else if (kind == CCKindRound) DumpViewOnce(v, r, "round");
 
-    ApplyDecor(v, b, r);
+    // Diagnostics isolation: decor off leaves glass only, glass off leaves decor only, both off is
+    // stock. That is how a wrong-looking tile gets bisected on the phone.
+    BOOL decorOn = gIsoDecor && !opaque;
+    if (decorOn) ApplyDecor(v, b, r);
+    else HideDecor(v);
 
     if (!gTracked) gTracked = [NSHashTable weakObjectsHashTable];
     [gTracked addObject:v];
 
     if (kind == CCKindContainer) { DecorateMenus(v); DumpExpanded(v); }
+    ReportStyle(v, profile, r, glassOn, decorOn);
+    PerfAdd("style", PerfNowMS() - perfStart);
 }
 
 // Style everything we have styled once more, with the geometry it has now. On the first open of
@@ -1436,7 +1712,7 @@ static double CurrentScale(UIView *v) {
 }
 
 static void MotionPress(UIView *v, double target, BOOL down) {
-    if (!gMotion || !gEnabled) return;
+    if (!MotionAllowed()) return;
     double now = CurrentScale(v);
     if (down) {
         CASpringAnimation *a = Spring(@"transform.scale", now, target, 16, 420);
@@ -1641,7 +1917,7 @@ static void PressEvent(UIWindow *w, UIEvent *e) {
 
 static void (*orig_win_sendEvent)(UIWindow *, SEL, UIEvent *);
 static void new_win_sendEvent(UIWindow *self, SEL _cmd, UIEvent *e) {
-    if (gMotion && gEnabled && e.type == UIEventTypeTouches) PressEvent(self, e);
+    if (MotionAllowed() && e.type == UIEventTypeTouches) PressEvent(self, e);
     orig_win_sendEvent(self, _cmd, e);
 }
 
@@ -1701,7 +1977,7 @@ static void GlowHide(CALayer *clip) {
 static void TouchGlow(UIView *v, NSSet *touches, BOOL down) {
     static Class slider;   // brightness is a CCUIContinuousSliderView, volume is a subclass of it (MRUContinuousSliderView)
     if (!slider) slider = objc_getClass("CCUIContinuousSliderView");
-    if (!gMotion || !gEnabled || !slider || ![v isKindOfClass:slider]) return;
+    if (!MotionAllowed() || !slider || ![v isKindOfClass:slider]) return;
     if (v.bounds.size.width < 20 || v.bounds.size.height < 20) return;
     CALayer *clip = GlowLayer(v);
     if (down) {
@@ -1744,7 +2020,7 @@ static void Shimmer(UIView *v) {
 static void MotionToggle(UIView *v, BOOL on) {
     NSNumber *was = objc_getAssociatedObject(v, kWasOnKey);
     objc_setAssociatedObject(v, kWasOnKey, @(on), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if (!gMotion || !gEnabled || !was || was.boolValue == on) return;
+    if (!MotionAllowed() || !was || was.boolValue == on) return;
     UIView *tile = TileRootFor(v);   // the whole tile pops, not the fill alone
     if (!tile || TileInEditMode(tile)) tile = v;
     double from = on ? 0.9 : 1.06;
@@ -1843,7 +2119,7 @@ static BOOL IsCCBackdrop(UIView *v) {
 }
 
 static CAAnimation *RetuneStockSpring(CALayer *layer, CAAnimation *anim) {
-    if (!gMotion || !gEnabled) return anim;
+    if (!MotionAllowed()) return anim;
     BOOL spring = [anim isKindOfClass:CASpringAnimation.class];
     if (!spring && ![anim isKindOfClass:CABasicAnimation.class]) return anim;
     NSString *kp = ((CAPropertyAnimation *)anim).keyPath;
@@ -1940,13 +2216,13 @@ static void (*orig_addAnimation)(CALayer *, SEL, CAAnimation *, NSString *);
 static void new_addAnimation(CALayer *self, SEL _cmd, CAAnimation *anim, NSString *key) {
     // CALayer is hooked process-wide, so every animation in SpringBoard lands here: get out with
     // two flag tests when there is nothing to retune (motion off, tweak off, or our own keys).
-    if (!gEnabled || (!gMotion && !gDebugDump) || [key hasPrefix:@"xc."]) {
+    if (!gEnabled || (!MotionAllowed() && !gDebugDump) || [key hasPrefix:@"xc."]) {
         orig_addAnimation(self, _cmd, anim, key);
         return;
     }
     CAAnimation *use = [key hasPrefix:@"xc."] ? anim : RetuneStockSpring(self, anim);
     orig_addAnimation(self, _cmd, use, key);
-    if (gMotion && gEnabled && ![key hasPrefix:@"xc."] && [self.delegate isKindOfClass:UIView.class]) FollowSizeAnimation(self, use);
+    if (MotionAllowed() && ![key hasPrefix:@"xc."] && [self.delegate isKindOfClass:UIView.class]) FollowSizeAnimation(self, use);
     if (!gDebugDump || [key hasPrefix:@"xc."]) return;
     id d = self.delegate;
     if (![d isKindOfClass:UIView.class]) return;
@@ -2024,6 +2300,9 @@ static const void *kPageStateKey = &kPageStateKey;
 @property (nonatomic, strong) CADisplayLink *link;
 @end
 @implementation XCPageState
+// The display link is the only thing that keeps a pager state alive; a page that goes away must not
+// leave a ticking link behind.
+- (void)dealloc { [_link invalidate]; }
 @end
 
 // Pages stretch along the scroll direction and squeeze across it, area kept (k = 0.05: 5 % taller, 1/1.05 as wide).
@@ -2086,7 +2365,9 @@ static void ScheduleStyleSettle(UIScrollView *sv) {
                        dispatch_get_main_queue(), ^{
             if (!wsv) return;
             if (i == 1) objc_setAssociatedObject(wsv, kStyleSettleKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            CaptureBackdropLuminance(wsv.window);   // what the tiles are actually over
             RestyleTrackedGeom();
+            PerfFlush();
         });
     }
 }
@@ -2221,7 +2502,10 @@ static void PageSpringBegin(UIScrollView *sv, XCPageState *st, BOOL vertical, CG
 // (ReleasePageStretch: a straight line home in 140 ms). Only a scroll that a finger started gets any of this;
 // the side buttons' scroll stays stock.
 static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
-    if (!gMotion || !gEnabled) return;
+    if (!gEnabled) return;
+    // Closed control center / switched page: no scroll frames to decorate, and the display link work
+    // would be pure cost (battery).
+    if (!self.window || self.window.hidden || self.window.alpha < 0.01) return;
     NSNumber *flag = objc_getAssociatedObject(self, kPageScrollKey);
     if (!flag) {
         flag = @([NSStringFromClass(self.class) isEqualToString:@"CCUIIconScrollView"]);   // not the home screen's SBIconScrollView
@@ -2245,6 +2529,9 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
     }
     if (!st.dumped) { st.dumped = YES; DumpPageScroll(self); }   // once the view has its real size
     if (!st.styled && self.window) { st.styled = YES; ScheduleStyleSettle(self); }
+    // Everything below this line moves the pages. Reduce Motion, or the motion switch, must not take
+    // the settle pass above with it (that one is what keeps the look right, not an animation).
+    if (!MotionAllowed()) return;
     if (st.spring) return;   // the landing spring (its display link) owns the pages
     if (gPageSpring && !settle) {
         UIPanGestureRecognizer *pan = self.panGestureRecognizer;
@@ -2396,14 +2683,19 @@ static NSString *const kLiquidAssDomain = @"dylv.liquidassprefs";
 static NSString *const kLiquidAssCCKey = @"ControlCenter.Enabled";
 static NSString *const kLiquidAssSavedKey = @"liquidass.originalControlCenter";
 
+// Cached for a couple of seconds, not forever: Liquid (Gl)ass can be installed or updated while
+// SpringBoard is running, and a dispatch_once answer would keep this tweak from ever handing the
+// Control Center over (or back) until the next respring.
 static BOOL LiquidAssInstalled(void) {
     static BOOL installed;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
+    static CFTimeInterval last = -100.0;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - last > 2.0) {
+        last = now;
         installed = [[NSFileManager defaultManager] fileExistsAtPath:
                         @"/var/jb/Library/MobileSubstrate/DynamicLibraries/liquidass.dylib"]
                  || dlsym(RTLD_DEFAULT, "LGLiquidGlassViewCreate") != NULL;
-    });
+    }
     return installed;
 }
 
@@ -2450,6 +2742,48 @@ static void YieldControlCenterFromLiquidAss(void) {
                       @"Liquid (Gl)ass found: its Control Center surface is switched off\n");
 }
 
+// The first thing a bug report needs: the device, the build, which classes were found, whether the
+// renderer announced itself, the accessibility state and the switches. Settings > Logs shows this file,
+// so a screenshot of the report is enough to tell which build and which path produced a wrong tile.
+static NSString *LGHardwareModel(void) {
+    size_t size = 0;
+    if (sysctlbyname("hw.machine", NULL, &size, NULL, 0) != 0 || size == 0) return @"?";
+    char *buf = malloc(size);
+    if (!buf) return @"?";
+    NSString *out = @"?";
+    if (sysctlbyname("hw.machine", buf, &size, NULL, 0) == 0) out = [NSString stringWithUTF8String:buf];
+    free(buf);
+    return out;
+}
+
+static void WriteCompatibilityReport(void) {
+    NSMutableString *o = [NSMutableString string];
+    [o appendFormat:@"ios26ccstyle %s\n", XC_VERSION];
+    [o appendFormat:@"ios %@\n", NSProcessInfo.processInfo.operatingSystemVersionString];
+    [o appendFormat:@"model %@\n", LGHardwareModel()];
+    UIScreen *s = UIScreen.mainScreen;
+    [o appendFormat:@"screen %.0fx%.0f @%.0fx\n", s.nativeBounds.size.width / s.nativeScale,
+        s.nativeBounds.size.height / s.nativeScale, s.nativeScale];
+    [o appendFormat:@"accessibility reduce-motion=%d reduce-transparency=%d increase-contrast=%d low-power=%d\n",
+        ReduceMotionOn(), ReduceTransparencyOn(), IncreaseContrastOn(), LowPowerOn()];
+    [o appendFormat:@"renderer-ready=%d liquidass-installed=%d\n",
+        LGDiagnosticsMarkerExists(@"xenonglass-ready"), LiquidAssInstalled()];
+    [o appendFormat:@"prefs enabled=%d modules=%d buttons=%d sliders=%d menus=%d motion=%d pageSpring=%d refract=%d iso=%d%d%d%d grid=%d\n",
+        gEnabled, gStyleModules, gStyleButtons, gStyleSliders, gStyleMenus, gMotion, gPageSpring, gRefract,
+        gIsoDecor, gIsoGlass, gIsoBlur, gIsoMotion, gSampleGrid];
+    static const char *names[] = {
+        "CCUIIconScrollView", "CCUIContentModuleBackgroundView", "CCUIContentModuleContentContainerView",
+        "CCUIControlTemplateView", "CCUIButtonModuleView", "CCUIAccessoryButton", "CCUIPowerButton",
+        "CCUIRoundButton", "CCUIContinuousSliderView", "CCUISteppedSliderView", "CCUIModuleCollectionView",
+        "MTMaterialView", "CABackdropLayer",
+    };
+    [o appendString:@"classes:"];
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+        [o appendFormat:@" %s=%d", names[i], objc_getClass(names[i]) != NULL];
+    [o appendString:@"\n"];
+    LGWriteDiagnostic(@"ios26ccstyle-compat.txt", o);
+}
+
 __attribute__((constructor))
 static void IOS26CCStyleInit(void) {
     @autoreleasepool {
@@ -2457,9 +2791,27 @@ static void IOS26CCStyleInit(void) {
 
         PruneOldLogs();
         LoadPrefs();
+        WriteCompatibilityReport();
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             YieldControlCenterFromLiquidAss();
+            WriteCompatibilityReport();   // the renderer marker is only meaningful a few seconds in
         });
+
+        // Accessibility changes take effect at once: they change what "motion" and "transparency"
+        // mean for this look, and keeping a style that contradicts them is the wrong answer.
+        NSArray<NSString *> *notes = @[
+            UIAccessibilityReduceMotionStatusDidChangeNotification,
+            UIAccessibilityReduceTransparencyStatusDidChangeNotification,
+            UIAccessibilityDarkerSystemColorsStatusDidChangeNotification,
+        ];
+        for (NSString *note in notes) {
+            [[NSNotificationCenter defaultCenter] addObserverForName:note object:nil queue:NSOperationQueue.mainQueue
+                                                         usingBlock:^(__unused NSNotification *n) {
+                LoadPrefs();
+                RestyleTrackedGeom();
+                PerfFlush();
+            }];
+        }
 
         Install_ModuleFill  ("CCUIContentModuleBackgroundView");
         Install_Container   ("CCUIContentModuleContentContainerView");

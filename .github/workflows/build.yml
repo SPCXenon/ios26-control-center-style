@@ -25,6 +25,9 @@ jobs:
           mkdir -p "$THEOS/sdks"
           cp -R "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
 
+      - name: Lint sources
+        run: python3 tools/lint.py
+
       - name: Build package
         run: make clean package FINALPACKAGE=1
 
