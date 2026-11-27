@@ -912,11 +912,9 @@ static void RestoreStock(UIView *v) {
     if (sysR) layer.cornerRadius = sysR.doubleValue;
     NSNumber *sysMasks = objc_getAssociatedObject(v, kSysMasksKey);
     layer.masksToBounds = sysMasks ? sysMasks.boolValue : NO;
-    NSNumber *sysCurve = objc_getAssociatedObject(v, kSysCurveKey);
-    // The property's enum is CALayerCornerCurve in older SDKs and CACornerCurve in newer ones, so
-    // the type is taken from the property instead of being spelled out here.
-    if (sysCurve) layer.cornerCurve = (typeof(layer.cornerCurve))sysCurve.integerValue;
-    else layer.cornerCurve = kCACornerCurveCircular;
+    // Stored as a BOOL, so neither the SDK's enum name nor its type has to be spelled out here.
+    layer.cornerCurve = [objc_getAssociatedObject(v, kSysCurveKey) boolValue]
+        ? kCACornerCurveContinuous : kCACornerCurveCircular;
     id sysBg = objc_getAssociatedObject(v, kSysBgKey);
     v.backgroundColor = [sysBg isKindOfClass:UIColor.class] ? (UIColor *)sysBg : nil;
     layer.borderWidth = 0.0;
@@ -1263,7 +1261,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     // First styling of this view: keep what the system had so the tweak can be switched off again.
     if (!objc_getAssociatedObject(v, kSysMasksKey)) {
         objc_setAssociatedObject(v, kSysMasksKey, @(layer.masksToBounds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(v, kSysCurveKey, @((NSInteger)layer.cornerCurve), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(v, kSysCurveKey, @(layer.cornerCurve == kCACornerCurveContinuous), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(v, kSysBgKey, v.backgroundColor ?: (id)[NSNull null], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 
