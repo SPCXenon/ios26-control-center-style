@@ -208,6 +208,7 @@ static const void *kSysMasksKey = &kSysMasksKey;   // masksToBounds the system h
 static const void *kSysCurveKey = &kSysCurveKey;   // cornerCurve the system had
 static const void *kSysBgKey    = &kSysBgKey;      // backgroundColor the system had
 static const void *kHookBusyKey = &kHookBusyKey;   // this view is already inside a style hook
+static const void *kKindKey     = &kKindKey;       // the CCKind this view was styled as
 static NSHashTable<UIView *> *gTracked;       // weak; used to restyle after a prefs change
 
 static BOOL KindEnabled(CCKind kind) {
@@ -460,7 +461,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
             ];
         }
         if (wantSheen) {
-            CGFloat a = MIN(0.3, gSheen * rs * (dark ? 0.8 : 1.3));
+            CGFloat a = MIN(0.3, gSheen * rs * (dark ? 0.8 : 1.3)) * MIN(1.0, 130.0 / MAX(1.0, shortSide));
             sheen.startPoint = CGPointMake(0.5, 0.0);
             sheen.endPoint = CGPointMake(0.5, 1.0);
             sheen.locations = @[@0.0, @0.45, @1.0];
@@ -471,7 +472,8 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
             ];
         }
         if (wantStreak) {
-            CGFloat a = MIN(0.30, (dark ? 0.05 : 0.14) * rs);
+            // A big panel shows the diagonal band as a broad wash; iOS 27 keeps it to the small tiles.
+            CGFloat a = MIN(0.30, (dark ? 0.05 : 0.14) * rs) * MIN(1.0, 140.0 / MAX(1.0, shortSide));
             CGColorRef clear = [UIColor colorWithWhite:1.0 alpha:0.0].CGColor;
             streak.startPoint = CGPointMake(0.0, 0.0);
             streak.endPoint = CGPointMake(1.0, 1.0);
@@ -481,17 +483,22 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
                               (__bridge id)clear, (__bridge id)clear];
         }
         if (wantHot) {
+            // iOS 27 keeps the specular highlight inside the corner arc. Stretching it over the whole
+            // view put a broad white fog over the large first-page modules (and over the expanded
+            // media panel), which is what made that page look washed out next to the small tiles.
+            CGFloat ext = MIN(0.45, MAX(0.16, (radius * 0.95) / MAX(1.0, shortSide)));
             CGFloat a = MIN(0.7, gHot * (dark ? 1.8 : 2.5) * rs * (circle ? 1.7 : 1.0));
+            a *= MIN(1.0, 120.0 / MAX(1.0, shortSide));
             NSArray *cols = @[(__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
                               (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
             hotTL.locations = @[@0.0, @1.0];
             hotTL.colors = cols;
-            hotTL.startPoint = CGPointMake(0.06, 0.04);
-            hotTL.endPoint = CGPointMake(0.62, 0.70);
+            hotTL.startPoint = CGPointMake(0.03, 0.02);
+            hotTL.endPoint = CGPointMake(0.03 + ext, 0.02 + ext);
             hotBR.locations = @[@0.0, @1.0];
             hotBR.colors = cols;
-            hotBR.startPoint = CGPointMake(0.94, 0.96);
-            hotBR.endPoint = CGPointMake(0.38, 0.30);
+            hotBR.startPoint = CGPointMake(0.97, 0.98);
+            hotBR.endPoint = CGPointMake(0.97 - ext, 0.98 - ext);
         }
     }
 
@@ -1220,6 +1227,17 @@ static BOOL HoldsSliderOrVolume(UIView *v, int depth) {
 }
 static BOOL ContainerHoldsVolume(UIView *v) { return HoldsSliderOrVolume(v, 0); }
 
+// The page wrapper holds the page's icon list views, so it must stay bare or a rim is drawn around
+// the whole page. That is a structural test: on the first open the modules of the first page are
+// laid out at page size for a moment, so their bounds cannot tell them apart from the wrapper.
+static BOOL HoldsIconList(UIView *v, int depth) {
+    for (UIView *s in v.subviews) {
+        if ([NSStringFromClass(s.class) hasSuffix:@"IconListView"]) return YES;
+        if (depth < 2 && HoldsIconList(s, depth + 1)) return YES;
+    }
+    return NO;
+}
+
 static void ApplyStyle(UIView *v, CCKind kind) {
     if (!v.window) return;
     ApplyBackground(v);
@@ -1248,12 +1266,22 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     CGRect b = v.bounds;
     if (b.size.width < 4.0 || b.size.height < 4.0) return;
 
-    // Skip the full-page wrapper so no outline is drawn around the whole page.
-    if ((kind == CCKindModule || kind == CCKindModuleFill || kind == CCKindContainer) &&
-        b.size.height > v.window.bounds.size.height * 0.72) {
-        RestoreStock(v);
-        if (kind == CCKindContainer) DecorateMenus(v);
-        return;
+    // Skip the page wrapper so no outline is drawn around the whole page. The decision is structural
+    // (the wrapper holds the icon list views) plus the on-screen rect, never the bounds alone: on the
+    // first open Control Center lays the first page's modules out at page size before it sizes them,
+    // and the old bounds test skipped those modules. Everything after that is a transform (the open
+    // animation), so no later layout hook came back and page 1 kept the unstyled look until the page
+    // was laid out again.
+    if ((kind == CCKindModule || kind == CCKindModuleFill || kind == CCKindContainer) && v.window) {
+        CGSize ws = v.window.bounds.size;
+        CGRect on = [v convertRect:v.bounds toView:v.window];
+        BOOL pageSized = on.size.width >= ws.width * 0.9 && on.size.height >= ws.height * 0.72;
+        BOOL wrapper = b.size.height > ws.height * 0.6 && HoldsIconList(v, 0);
+        if (pageSized || wrapper) {
+            RestoreStock(v);
+            if (kind == CCKindContainer) DecorateMenus(v);
+            return;
+        }
     }
 
     CALayer *layer = v.layer;
@@ -1283,6 +1311,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     }
     objc_setAssociatedObject(v, kLastRKey, @(r), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(v, kStyledKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(v, kKindKey, @(kind), OBJC_ASSOCIATION_RETAIN_NONATOMIC);   // for the late restyle
 
     layer.cornerCurve   = gContinuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
     layer.cornerRadius  = r;
@@ -1309,6 +1338,19 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     [gTracked addObject:v];
 
     if (kind == CCKindContainer) { DecorateMenus(v); DumpExpanded(v); }
+}
+
+// Style everything we have styled once more, with the geometry it has now. On the first open of
+// Control Center the modules are styled while the page is still being sized (page 1 starts at its
+// pre-open bounds), and the open animation only changes transforms afterwards, so the layout hooks
+// never run again on those views. The pager calls this once it has settled (ScheduleStyleSettle).
+static void RestyleTrackedGeom(void) {
+    if (!gEnabled || !gTracked) return;
+    for (UIView *v in gTracked.allObjects) {
+        if (!v.window) continue;
+        NSNumber *k = objc_getAssociatedObject(v, kKindKey);
+        if (k) ApplyStyle(v, (CCKind)k.integerValue);
+    }
 }
 
 // CCUI occasionally resets its own corner radius right after the view lands in a
@@ -1980,7 +2022,7 @@ static const void *kPageStateKey = &kPageStateKey;
 
 @interface XCPageState : NSObject
 @property (nonatomic) CGFloat off, speed, peak, k;
-@property (nonatomic) BOOL armed, released, finger, dirty, dumped;
+@property (nonatomic) BOOL armed, released, finger, dirty, dumped, styled;
 @property (nonatomic) CFTimeInterval time;
 // finger flick landing (a spring of our own, see PageSpringBegin)
 @property (nonatomic) BOOL wasTracking, spring, pending, vertical;
@@ -2035,6 +2077,25 @@ static void SchedulePageSettle(UIScrollView *self) {
     objc_setAssociatedObject(self, kPageSettleKey, block, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.055 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), block);
+}
+
+// The first layout of the pager is what the first page is styled in, while Control Center is still
+// sizing it. Style the tracked views again once the open animation has run (twice: the spring can
+// still be settling at the first delay). Runs once per pager view.
+static const void *kStyleSettleKey = &kStyleSettleKey;
+static void ScheduleStyleSettle(UIScrollView *sv) {
+    if (objc_getAssociatedObject(sv, kStyleSettleKey)) return;
+    objc_setAssociatedObject(sv, kStyleSettleKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    __weak UIScrollView *wsv = sv;
+    const double delays[] = { 0.35, 1.10 };
+    for (int i = 0; i < 2; i++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[i] * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            if (!wsv) return;
+            if (i == 1) objc_setAssociatedObject(wsv, kStyleSettleKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            RestyleTrackedGeom();
+        });
+    }
 }
 
 // Fade by distance from the centre and the stretch, for the scroll position `off` (the displayed one while a
@@ -2190,6 +2251,7 @@ static void ApplyPageScrollTo(UIScrollView *self, BOOL settle) {
         objc_setAssociatedObject(self, kPageStateKey, st, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (!st.dumped) { st.dumped = YES; DumpPageScroll(self); }   // once the view has its real size
+    if (!st.styled && self.window) { st.styled = YES; ScheduleStyleSettle(self); }
     if (st.spring) return;   // the landing spring (its display link) owns the pages
     if (gPageSpring && !settle) {
         UIPanGestureRecognizer *pan = self.panGestureRecognizer;
