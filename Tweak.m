@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.18
+// IOS26CCStyle 0.4.19
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -23,7 +23,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.18"
+#define XC_VERSION "0.4.19"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -1140,10 +1140,62 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
     }
 }
 
+// An expanded module (Now Playing, volume, menus) is one big panel. Its glass is made for the collapsed
+// tile (the Now Playing background is 612 x 299 and ends half way down the expanded 321 x 534 card), so
+// the panel gets a glass of its own over its full size, behind the content, and the tile glass inside
+// it steps aside: one look with the tiles.
+static const void *kPanelGlassKey = &kPanelGlassKey;
+static const void *kPanelHidKey   = &kPanelHidKey;
+
+static void HideInnerGlass(UIView *root, UIView *keep, BOOL hide, int depth) {
+    if (depth > 5) return;
+    for (UIView *s in root.subviews) {
+        if (s == keep) continue;
+        if ([s isKindOfClass:XCGlassView.class]) {
+            if (hide && !s.hidden) { s.hidden = YES; objc_setAssociatedObject(s, kPanelHidKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+            else if (!hide && objc_getAssociatedObject(s, kPanelHidKey)) { s.hidden = NO; objc_setAssociatedObject(s, kPanelHidKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+            continue;
+        }
+        if (s.subviews.count && s.bounds.size.width * s.bounds.size.height > 400) HideInnerGlass(s, keep, hide, depth + 1);
+    }
+}
+
+static void SyncPanelGlass(UIView *v, CGFloat radius, BOOL dark, BOOL want) {
+    CGSize sz = v.bounds.size;
+    BOOL expanded = want && sz.height > 240.0 && MIN(sz.width, sz.height) > 200.0;
+    XCGlassView *pg = objc_getAssociatedObject(v, kPanelGlassKey);
+    BOOL fullGlass = NO;   // a glass that already covers the whole panel (the volume panel's)
+    for (UIView *s in v.subviews) {
+        if (s != pg && [s isKindOfClass:XCGlassView.class] && CGRectEqualToRect(s.frame, v.bounds)) fullGlass = YES;
+    }
+    if (!expanded || fullGlass) {
+        if (pg) { [pg removeFromSuperview]; objc_setAssociatedObject(v, kPanelGlassKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+        if (!expanded) HideInnerGlass(v, nil, NO, 0);
+        return;
+    }
+    if (!pg) {
+        pg = [[XCGlassView alloc] initWithFrame:v.bounds];
+        objc_setAssociatedObject(v, kPanelGlassKey, pg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (!gGlassViews) gGlassViews = [NSHashTable weakObjectsHashTable];
+        [gGlassViews addObject:pg];
+    }
+    if (pg.superview != v || [v.subviews indexOfObject:pg] != 0) [v insertSubview:pg atIndex:0];
+    if (!CGRectEqualToRect(pg.frame, v.bounds)) pg.frame = v.bounds;
+    pg.layer.cornerCurve = kCACornerCurveContinuous;
+    pg.layer.cornerRadius = radius;
+    pg.layer.masksToBounds = YES;
+    pg.glassRadius = radius;
+    pg.glassDark = dark;
+    pg.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.01 + 0.05 * gGlass];
+    [pg attachFilter];
+    HideInnerGlass(v, pg, YES, 0);
+}
+
 static void SyncGlass(UIView *v, CCKind kind, CGFloat radius, BOOL dark, BOOL enabled) {
     if (kind != CCKindModuleFill && kind != CCKindContainer) return;
     BOOL want = enabled && gRefract && GlassRendererReady();
     SyncGlassIn(v, want, radius, dark, 0);
+    if (kind == CCKindContainer) SyncPanelGlass(v, radius, dark, want);
 }
 
 // Take a view back to what the system had before we styled it. Switching the tweak off used to
@@ -1199,6 +1251,7 @@ static void RestoreStock(UIView *v) {
     objc_setAssociatedObject(v, kLastRKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(v, kStyledKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     SyncGlassIn(v, NO, 0.0, IsDarkUI(v), 0);
+    SyncPanelGlass(v, 0.0, NO, NO);
     SetMaterialAlpha(v, 0, 1.0);
 }
 
@@ -1567,7 +1620,8 @@ static LGProfile LGProfileFor(UIView *v, CCKind kind, CGRect b) {
     // an expanded module must stay bare whatever its class.
     if (kind == CCKindModule || kind == CCKindModuleFill || kind == CCKindContainer) {
         CGSize ws = v.window ? v.window.bounds.size : CGSizeZero;
-        if (ws.height > 1 && b.size.height > ws.height * 0.72) return LGProfileBackdrop;
+        // a page wrapper is as wide as the screen; the expanded connectivity page is page-high but only 299 pt wide
+        if (ws.height > 1 && b.size.height > ws.height * 0.72 && b.size.width > ws.width * 0.9) return LGProfileBackdrop;
         if (ws.height > 1 && b.size.height > ws.height * 0.6 && HoldsIconList(v, 0)) return LGProfileBackdrop;
         if (p == LGProfileTile && objc_getAssociatedObject(v, kMenuKey)) p = LGProfileMenu;
         else if (p == LGProfileTile && b.size.height > 240) p = LGProfilePanel;

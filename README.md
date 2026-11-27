@@ -1,4 +1,4 @@
-# iOS 26 Control Center Style 0.4.18
+# iOS 26 Control Center Style 0.4.19
 
 Liquid Glass look for the iOS 18 Control Center. Rootless · arm64e · SpringBoard only (iPhone XS, iOS 18.5, Dopamine).
 
@@ -56,7 +56,7 @@ is invalidated when its pager goes away, and the backdrop walk is capped and rat
 
 ## Build
 arm64e needs Apple's linker, so build with GitHub Actions (**Build rootless tweak**, every push). The workflow installs the Theos iOS 16.5 SDK (it contains the private `Preferences` framework stub) and fails if the package has a double `/var/jb` prefix or lacks the prefs bundle.
-Download the `IOS26CCStyle-rootless-deb-v0.4.18` artifact, extract the `.deb`, install with Sileo/Filza, and respring.
+Download the `IOS26CCStyle-rootless-deb-v0.4.19` artifact, extract the `.deb`, install with Sileo/Filza, and respring.
 
 ## Refraction glass (backboardd)
 `backboardd/` is a second tweak injected into `backboardd` that registers a Metal render pass in the render
