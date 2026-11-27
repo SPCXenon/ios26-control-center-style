@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.17
+// IOS26CCStyle 0.4.18
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -23,7 +23,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.17"
+#define XC_VERSION "0.4.18"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -43,6 +43,7 @@ static CGFloat gInner, gHot;   // inner edge glow 0…1, corner highlight 0…0.
 static CGFloat gReflect;       // reflectivity of the glass (specular rim, sheen, streak, highlights) 0…1
 static CGFloat gEdgeDark;      // iOS 27-style darkened edge 0…1
 static CGFloat gDisp;          // chromatic fringe on the rim 0…1
+static CGFloat gBgDim;         // extra darkening of the page behind Control Center (reference: white screen -> 88/255)
 static CGFloat gBgBlur;        // full-screen backdrop blur: 1 = stock, lower = clearer
 static BOOL    gRefract;       // real refraction glass via the backboardd renderer
 static BOOL    gDebugDump;     // write a view-tree dump (for class-name diagnostics)
@@ -149,6 +150,7 @@ static void LoadPrefs(void) {
     gReflect       = (CGFloat)PrefDouble(@"reflect", 0.6, 0.0, 1.0);
     gEdgeDark      = (CGFloat)PrefDouble(@"edgeDark", 0.30, 0.0, 1.0);
     gBgBlur        = (CGFloat)PrefDouble(@"bgBlur", 1.0, 0.0, 1.0);
+    gBgDim         = (CGFloat)PrefDouble(@"bgDim", 0.65, 0.0, 0.9);
     gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.5, 0.0, 1.0);
     gDebugDump     = PrefBool(@"debugDump", YES);   // on by default: a report is what a bug report needs
     gIsoDecor      = PrefBool(@"isoDecor", YES);
@@ -847,7 +849,43 @@ static void RemoveBgBlur(UIView *mat) {
     mat.hidden = NO;
 }
 
+// The page behind Control Center is dimmed hard on the reference: a white screen comes out at 88/255 and a
+// black one at 12/255 (about 0.29 x the screen + 12), which is also what keeps bright widgets from
+// washing the tiles out. A black layer and a faint white one on top of the backdrop make that.
+static const void *kDimKey = &kDimKey;   // on the MTMaterialView: our dim view
+
+static void RemoveBgDim(UIView *mat) {
+    UIView *d = objc_getAssociatedObject(mat, kDimKey);
+    if (!d) return;
+    [d removeFromSuperview];
+    objc_setAssociatedObject(mat, kDimKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static void ApplyBgDim(UIView *s) {
+    UIView *parent = s.superview;
+    if (!gEnabled || gBgDim < 0.01 || !parent || !IsDarkUI(s)) { RemoveBgDim(s); return; }
+    UIView *d = objc_getAssociatedObject(s, kDimKey);
+    if (!d) {
+        d = [[UIView alloc] initWithFrame:s.frame];
+        d.userInteractionEnabled = NO;
+        UIView *w = [[UIView alloc] initWithFrame:d.bounds];
+        w.userInteractionEnabled = NO;
+        w.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        w.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.05];
+        [d addSubview:w];
+        objc_setAssociatedObject(s, kDimKey, d, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    d.backgroundColor = [UIColor colorWithWhite:0.0 alpha:gBgDim];
+    UIView *anchor = objc_getAssociatedObject(s, kBlurViewKey) ?: s;
+    NSArray *sib = parent.subviews;
+    NSUInteger ai = [sib indexOfObject:anchor], di = [sib indexOfObject:d];
+    if (d.superview != parent || di == NSNotFound || ai == NSNotFound || di != ai + 1) [parent insertSubview:d aboveSubview:anchor];
+    if (!CGRectEqualToRect(d.frame, s.frame)) d.frame = s.frame;
+    if (fabs(d.alpha - s.alpha) > 0.001) d.alpha = s.alpha;
+}
+
 static void ScaleBackdrop(UIView *s) {
+    ApplyBgDim(s);
     XCBlurView *b = objc_getAssociatedObject(s, kBlurViewKey);
     UIView *parent = s.superview;
     if (!gEnabled || gBgBlur >= 0.999 || !parent) { RemoveBgBlur(s); return; }
@@ -867,6 +905,8 @@ static void hook_setAlpha(UIView *self, SEL _cmd, CGFloat a) {
     orig_setAlpha(self, _cmd, a);
     XCBlurView *b = objc_getAssociatedObject(self, kBlurViewKey);
     if (b) b.alpha = a;
+    UIView *d = objc_getAssociatedObject(self, kDimKey);
+    if (d) d.alpha = a;
 }
 
 
