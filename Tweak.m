@@ -121,20 +121,23 @@ static void LoadPrefs(void) {
     gPageSpeed     = PrefDouble(@"pageSpeed", 1.8, 0.5, 3.0);
     gPageFx        = PrefDouble(@"pageEffect", 60.0, 0.0, 100.0);
     gMaxRadius     = (CGFloat)PrefDouble(@"maxRadius", 46.0, 16.0, 70.0);
-    gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.7, 0.0, 1.0);
-    gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.8, 0.3, 2.5);
-    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.06, 0.0, 0.2);
+    // iOS 27 reference: the rim is a soft, low-contrast trace, not a bright outline; the glow is a hint
+    // in the corner and the top sheen is barely there. The transparencies below keep the tile close to
+    // the wallpaper so the colour behind it comes through.
+    gRim           = (CGFloat)PrefDouble(@"rimIntensity", 0.45, 0.0, 1.0);
+    gRimWidth      = (CGFloat)PrefDouble(@"rimWidth", 0.7, 0.3, 2.5);
+    gSheen         = (CGFloat)PrefDouble(@"sheen", 0.035, 0.0, 0.2);
     gTint          = (CGFloat)PrefDouble(@"fillTint", 0.0, 0.0, 0.3);
-    gInner         = (CGFloat)PrefDouble(@"innerRim", 0.2, 0.0, 1.0);
-    gHot           = (CGFloat)PrefDouble(@"glow", 0.12, 0.0, 0.3);
+    gInner         = (CGFloat)PrefDouble(@"innerRim", 0.15, 0.0, 1.0);
+    gHot           = (CGFloat)PrefDouble(@"glow", 0.05, 0.0, 0.3);
     gGlass         = (CGFloat)PrefDouble(@"glassTint", 0.55, 0.0, 1.0);
-    gMatAlpha      = 0.35 + 0.65 * gGlass;
-    gEffTint       = MIN(0.5, 0.03 + 0.17 * gGlass + gTint);
+    gMatAlpha      = 0.28 + 0.58 * gGlass;
+    gEffTint       = MIN(0.5, 0.02 + 0.12 * gGlass + gTint);
     gRimMul        = 1.3 - 0.5 * gGlass;
-    gReflect       = (CGFloat)PrefDouble(@"reflect", 0.7, 0.0, 1.0);
-    gEdgeDark      = (CGFloat)PrefDouble(@"edgeDark", 0.35, 0.0, 1.0);
+    gReflect       = (CGFloat)PrefDouble(@"reflect", 0.6, 0.0, 1.0);
+    gEdgeDark      = (CGFloat)PrefDouble(@"edgeDark", 0.30, 0.0, 1.0);
     gBgBlur        = (CGFloat)PrefDouble(@"bgBlur", 1.0, 0.0, 1.0);
-    gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.6, 0.0, 1.0);
+    gDisp          = (CGFloat)PrefDouble(@"dispersion", 0.5, 0.0, 1.0);
     gDebugDump     = PrefBool(@"debugDump", NO);
     gRefract       = PrefBool(@"refraction", YES) && PrefBool(@"Renderer.Enabled", YES);
     gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
@@ -461,7 +464,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
             ];
         }
         if (wantSheen) {
-            CGFloat a = MIN(0.3, gSheen * rs * (dark ? 0.8 : 1.3)) * MIN(1.0, 130.0 / MAX(1.0, shortSide));
+            CGFloat a = MIN(0.3, gSheen * rs * (dark ? 0.8 : 1.3));
             sheen.startPoint = CGPointMake(0.5, 0.0);
             sheen.endPoint = CGPointMake(0.5, 1.0);
             sheen.locations = @[@0.0, @0.45, @1.0];
@@ -472,8 +475,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
             ];
         }
         if (wantStreak) {
-            // A big panel shows the diagonal band as a broad wash; iOS 27 keeps it to the small tiles.
-            CGFloat a = MIN(0.30, (dark ? 0.05 : 0.14) * rs) * MIN(1.0, 140.0 / MAX(1.0, shortSide));
+            CGFloat a = MIN(0.30, (dark ? 0.05 : 0.14) * rs);
             CGColorRef clear = [UIColor colorWithWhite:1.0 alpha:0.0].CGColor;
             streak.startPoint = CGPointMake(0.0, 0.0);
             streak.endPoint = CGPointMake(1.0, 1.0);
@@ -483,22 +485,17 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
                               (__bridge id)clear, (__bridge id)clear];
         }
         if (wantHot) {
-            // iOS 27 keeps the specular highlight inside the corner arc. Stretching it over the whole
-            // view put a broad white fog over the large first-page modules (and over the expanded
-            // media panel), which is what made that page look washed out next to the small tiles.
-            CGFloat ext = MIN(0.45, MAX(0.16, (radius * 0.95) / MAX(1.0, shortSide)));
             CGFloat a = MIN(0.7, gHot * (dark ? 1.8 : 2.5) * rs * (circle ? 1.7 : 1.0));
-            a *= MIN(1.0, 120.0 / MAX(1.0, shortSide));
             NSArray *cols = @[(__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
                               (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
             hotTL.locations = @[@0.0, @1.0];
             hotTL.colors = cols;
-            hotTL.startPoint = CGPointMake(0.03, 0.02);
-            hotTL.endPoint = CGPointMake(0.03 + ext, 0.02 + ext);
+            hotTL.startPoint = CGPointMake(0.06, 0.04);
+            hotTL.endPoint = CGPointMake(0.62, 0.70);
             hotBR.locations = @[@0.0, @1.0];
             hotBR.colors = cols;
-            hotBR.startPoint = CGPointMake(0.97, 0.98);
-            hotBR.endPoint = CGPointMake(0.97 - ext, 0.98 - ext);
+            hotBR.startPoint = CGPointMake(0.94, 0.96);
+            hotBR.endPoint = CGPointMake(0.38, 0.30);
         }
     }
 
@@ -884,7 +881,7 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
             g.glassDark = dark;
             // base tint on the glass itself (the stock background view is alpha 0): a light veil, as on the
             // reference, where an off tile is clearly lighter and more vivid than the page around it.
-            g.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.02 + 0.08 * gGlass];
+            g.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.01 + 0.05 * gGlass];
             [g attachFilter];
             if (!s.hidden) s.hidden = YES;
             continue;
@@ -982,7 +979,7 @@ static UILabel *FirstLabel(UIView *v, int depth) {
 static const void *kSynthFillKey = &kSynthFillKey;   // our own fill view, for tiles with no system fill
 
 // Returns the number of system on-fills that were restyled.
-static CGFloat OnFillAlpha(BOOL dark) { return (dark ? 0.96 : 0.98) - 0.06 * gGlass; }
+static CGFloat OnFillAlpha(BOOL dark) { return (dark ? 0.92 : 0.94) - 0.06 * gGlass; }
 
 static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
     if (depth > 4) return 0;
@@ -1266,18 +1263,14 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     CGRect b = v.bounds;
     if (b.size.width < 4.0 || b.size.height < 4.0) return;
 
-    // Skip the page wrapper so no outline is drawn around the whole page. The decision is structural
-    // (the wrapper holds the icon list views) plus the on-screen rect, never the bounds alone: on the
-    // first open Control Center lays the first page's modules out at page size before it sizes them,
-    // and the old bounds test skipped those modules. Everything after that is a transform (the open
-    // animation), so no later layout hook came back and page 1 kept the unstyled look until the page
-    // was laid out again.
+    // Skip the page wrapper and the backdrop of an expanded module: no rim, no glass of ours, the
+    // system's own material stays. This has to stay a size test. Page 1's tiles are transiently
+    // page-sized on the first layout pass, so they are skipped then too; the pager restyles them at
+    // their real size once the open animation has run (ScheduleStyleSettle), which is the fix for the
+    // first open. Loosening this test instead drew a rim and glass around whole pages.
     if ((kind == CCKindModule || kind == CCKindModuleFill || kind == CCKindContainer) && v.window) {
         CGSize ws = v.window.bounds.size;
-        CGRect on = [v convertRect:v.bounds toView:v.window];
-        BOOL pageSized = on.size.width >= ws.width * 0.9 && on.size.height >= ws.height * 0.72;
-        BOOL wrapper = b.size.height > ws.height * 0.6 && HoldsIconList(v, 0);
-        if (pageSized || wrapper) {
+        if (b.size.height > ws.height * 0.72 || (b.size.height > ws.height * 0.6 && HoldsIconList(v, 0))) {
             RestoreStock(v);
             if (kind == CCKindContainer) DecorateMenus(v);
             return;
@@ -1319,7 +1312,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     layer.borderWidth   = 0.0;
 
     BOOL darkUI = IsDarkUI(v);
-    SetMaterialAlpha(v, 0, darkUI ? gMatAlpha : MAX(gMatAlpha, 0.7));
+    SetMaterialAlpha(v, 0, darkUI ? gMatAlpha : MAX(gMatAlpha, 0.6));
     SyncGlass(v, kind, r, darkUI, YES);
     BOOL glassOn = gRefract && GlassRendererReady();
 

@@ -1464,14 +1464,14 @@ static void lgStartPrefsObserver(void) {
 
 // Glass blur radius (points) from the tweak's preferences, re-read at most every 1.5 s.
 static float lgGlassBlurPoints(void) {
-    static float v = 14.0f;
+    static float v = 20.0f;
     static CFAbsoluteTime last = 0;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     if (now - last > 1.5) {
         last = now;
         NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.xenon.ios26ccstyle.plist"];
         id n = d[@"glassBlurRadius"];
-        v = [n isKindOfClass:NSNumber.class] ? fminf(40.0f, fmaxf(0.0f, roundf([n floatValue] * 100.0f) / 100.0f)) : 14.0f;
+        v = [n isKindOfClass:NSNumber.class] ? fminf(40.0f, fmaxf(0.0f, roundf([n floatValue] * 100.0f) / 100.0f)) : 20.0f;
     }
     return v;
 }
