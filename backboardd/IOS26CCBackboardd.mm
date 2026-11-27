@@ -541,7 +541,10 @@ float4 glassSample(texture2d<float> src, sampler s, float2 uv, constant Uniforms
     float4 o = acc / wsum;
     // iOS 27 glass is vivid: the colour of the page behind it comes through a little stronger
     float lum = dot(o.rgb, float3(0.2126, 0.7152, 0.0722));
-    o.rgb = saturate(mix(float3(lum), o.rgb, 1.15));
+    o.rgb = saturate(mix(float3(lum), o.rgb, 1.35));
+    // and lighter than what surrounds it: measured on the reference, a tile is about twice as bright as the
+    // dimmed page around it, with the hue of what is behind kept
+    o.rgb = saturate(o.rgb * 1.28 + 0.03);
     return o;
 }
 

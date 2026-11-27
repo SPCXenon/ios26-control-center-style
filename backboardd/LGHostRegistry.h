@@ -28,7 +28,7 @@ typedef struct {
     X(Dock,           "xenon.liquidglass.dock",         "Dock",            0.35f,          17.50f,    120.0f, 2.6f, 1.60f, 3.0f, 1.0f,  0.00f, "#FFFFFF1A", "#00000000") \
     X(Banner,         "xenon.liquidglass.banner",       "Banner",          28.0f / 220.0f, 20.75f,    132.0f, 1.6f, 1.60f, 3.0f, 1.0f,  0.00f, "#FFFFFFCC", "#00000080") \
     X(Notification,   "xenon.liquidglass.notification", "Notification",    28.0f / 220.0f, 20.75f,    132.0f, 1.6f, 1.60f, 3.0f, 1.0f,  0.00f, "#FFFFFF00", "#00000000") \
-    X(ControlCenter,  "xenon.liquidglass.cc",           "ControlCenter",   28.0f / 220.0f, 15.50f,    120.0f, 1.4f, 1.60f, 0.0f, 1.0f,  1.20f, "#FFFFFF1A", "#0A0C1424") \
+    X(ControlCenter,  "xenon.liquidglass.cc",           "ControlCenter",   28.0f / 220.0f, 15.50f,    120.0f, 1.4f, 1.60f, 0.0f, 1.0f,  1.20f, "#FFFFFF1A", "#FFFFFF0F") \
     X(AppLibrary,     "xenon.liquidglass.applibpod",    "AppLibrary",      28.0f / 220.0f, 25.00f,    120.0f, 2.2f, 1.60f, 0.0f, 1.0f,  2.00f, "#FFFFFF1A", "#00000000") \
     X(AppLibSearch,   "xenon.liquidglass.applibsearch", "AppLibSearch",    0.50f,          25.00f,    108.0f, 1.8f, 1.60f, 0.0f, 1.0f,  2.00f, "#FFFFFF1A", "#00000000") \
     X(Spotlight,      "xenon.liquidglass.spotlight",    "Spotlight",       0.50f,          25.00f,    108.0f, 1.8f, 1.60f, 0.0f, 1.0f,  2.00f, "#FFFFFFCC", "#0000004d") \

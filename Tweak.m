@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.15
+// IOS26CCStyle 0.4.16
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -16,7 +16,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.15"
+#define XC_VERSION "0.4.16"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -833,10 +833,9 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
             g.layer.masksToBounds = YES;
             g.glassRadius = radius;
             g.glassDark = dark;
-            // base tint on the glass itself (the stock background view is alpha 0). In dark mode it is a smoky
-            // veil, like the stock material it replaces (a pale one made page 1 look washed out next to page 3).
-            g.backgroundColor = dark ? [UIColor colorWithRed:0.04 green:0.05 blue:0.08 alpha:0.05 + 0.30 * gGlass]
-                                     : [UIColor colorWithWhite:1.0 alpha:0.03 + 0.08 * gGlass];
+            // base tint on the glass itself (the stock background view is alpha 0): a light veil, as on the
+            // reference, where an off tile is clearly lighter and more vivid than the page around it.
+            g.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.03 + 0.12 * gGlass];
             [g attachFilter];
             if (!s.hidden) s.hidden = YES;
             continue;
