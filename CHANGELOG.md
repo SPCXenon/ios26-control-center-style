@@ -3,6 +3,24 @@
 Package version stays **0.4.17** until explicitly bumped; everything below is on branch
 `liquid-glass-0.5.0`.
 
+### Launch crash (safe mode before Control Center opens)
+
+The previous build read UIKit from the dylib constructor. A constructor runs during dyld
+initialisation, while SpringBoard is still starting: `UIScreen.mainScreen` and the Reduce Motion /
+Reduce Transparency queries (which go out to the accessibility server) are not usable there, so
+SpringBoard died before it finished launching and iOS dropped into safe mode without Control Center
+ever being opened. Nothing in the constructor touches UI now: the compatibility report is built on the
+main queue once the app runs, the launch path only does file and preference reads, and the Reduce
+Motion answer the layer/scroll/touch hooks ask for on every frame is cached for 0.5 s instead of
+crossing to the accessibility server per animation.
+
+The animation log (off in older builds, on by default now) is written from a process-wide `CALayer`
+hook that can run on any thread; its shared buffer is serialised with an unfair lock.
+
+The tweak also cannot loop the device into safe mode any more: four SpringBoard starts inside 90 s
+means the build itself is what is killing it, so it stays out of the way for that boot (no hooks,
+stock Control Center) and says so in `ios26ccstyle-guard.txt`. A boot that stays up clears it.
+
 ## Xperimental — reference pass, diagnostics, presets, robustness
 
 ### Look (measured values, not adjectives)

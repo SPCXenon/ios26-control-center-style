@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <os/lock.h>
 #include <sys/sysctl.h>
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
@@ -246,7 +247,21 @@ static void PerfFlush(void) {
 // The system settings that decide how much of this look a user can actually take: Reduce Motion
 // (no springs), Reduce Transparency (opaque material, no glass), Increase Contrast (stronger edge).
 
-static BOOL ReduceMotionOn(void) { return UIAccessibilityIsReduceMotionEnabled(); }
+// Reduce Motion lives in another process: asking costs an accessibility round trip. The layer, scroll
+// and touch hooks ask on every animation and every event, so the answer is kept for half a second and
+// thrown away when the setting changes (see the status-change observers below).
+static BOOL gReduceMotion;
+static CFTimeInterval gReduceMotionAt = -1.0;
+
+static BOOL ReduceMotionOn(void) {
+    CFTimeInterval now = CACurrentMediaTime();
+    if (gReduceMotionAt < 0 || now - gReduceMotionAt > 0.5) {
+        gReduceMotionAt = now;
+        gReduceMotion = UIAccessibilityIsReduceMotionEnabled();
+    }
+    return gReduceMotion;
+}
+
 static BOOL ReduceTransparencyOn(void) { return UIAccessibilityIsReduceTransparencyEnabled(); }
 static BOOL IncreaseContrastOn(void) { return UIAccessibilityDarkerSystemColorsEnabled(); }
 static BOOL LowPowerOn(void) { return NSProcessInfo.processInfo.isLowPowerModeEnabled; }
@@ -2212,6 +2227,36 @@ static void FollowSizeAnimation(CALayer *layer, CAAnimation *anim) {
     }
 }
 
+// The layer hook is process-wide, so this runs for every animation SpringBoard adds, and layers can be
+// animated off the main thread: the scratch buffer and the "already seen" set are shared, so the dump is
+// serialised. With the view dumps on by default this path is live from the first frame of the home screen.
+static os_unfair_lock gAnimLogLock = OS_UNFAIR_LOCK_INIT;
+
+static void LogCCAnimation(UIView *v, CAAnimation *anim, NSString *key) {
+    BOOL cc = NO;
+    for (UIView *a = v; a && !cc; a = a.superview) {
+        NSString *n = NSStringFromClass(a.class);
+        cc = [n hasPrefix:@"CCUI"] || [n hasPrefix:@"ControlCenter"] ||
+             [n containsString:@"ContextMenu"] || [n containsString:@"CCUIModule"];
+    }
+    if (!cc) return;
+
+    static NSMutableSet *seen;
+    static NSMutableString *acc;
+    static int lines;
+    os_unfair_lock_lock(&gAnimLogLock);
+    if (!seen) { seen = [NSMutableSet set]; acc = [NSMutableString string]; }
+    NSString *kp = [anim isKindOfClass:CAPropertyAnimation.class] ? ((CAPropertyAnimation *)anim).keyPath : @"-";
+    NSString *sig = [NSString stringWithFormat:@"%@|%@|%@|%@", NSStringFromClass(v.class), key, kp, NSStringFromClass(anim.class)];
+    if ([seen containsObject:sig] || lines > 160) { os_unfair_lock_unlock(&gAnimLogLock); return; }
+    [seen addObject:sig]; lines++;
+    NSString *parent = v.superview ? NSStringFromClass(v.superview.class) : @"-";
+    [acc appendFormat:@"%@ (in %@) key=%@ keyPath=%@ %@ dur=%.2f size=%@\n", NSStringFromClass(v.class), parent, key, kp,
+     NSStringFromClass(anim.class), anim.duration, NSStringFromCGSize(v.bounds.size)];
+    LGWriteDiagnostic(@"ios26ccstyle-anim-log.txt", acc);
+    os_unfair_lock_unlock(&gAnimLogLock);
+}
+
 static void (*orig_addAnimation)(CALayer *, SEL, CAAnimation *, NSString *);
 static void new_addAnimation(CALayer *self, SEL _cmd, CAAnimation *anim, NSString *key) {
     // CALayer is hooked process-wide, so every animation in SpringBoard lands here: get out with
@@ -2226,23 +2271,7 @@ static void new_addAnimation(CALayer *self, SEL _cmd, CAAnimation *anim, NSStrin
     if (!gDebugDump || [key hasPrefix:@"xc."]) return;
     id d = self.delegate;
     if (![d isKindOfClass:UIView.class]) return;
-    UIView *v = d;
-    BOOL cc = NO;
-    for (UIView *a = v; a && !cc; a = a.superview) {
-        NSString *n = NSStringFromClass(a.class);
-        cc = [n hasPrefix:@"CCUI"] || [n hasPrefix:@"ControlCenter"] || [n containsString:@"ContextMenu"] || [n containsString:@"CCUIModule"];
-    }
-    if (!cc) return;
-    static NSMutableSet *seen; static NSMutableString *acc; static int lines;
-    if (!seen) { seen = [NSMutableSet set]; acc = [NSMutableString string]; }
-    NSString *kp = [anim isKindOfClass:CAPropertyAnimation.class] ? ((CAPropertyAnimation *)anim).keyPath : @"-";
-    NSString *sig = [NSString stringWithFormat:@"%@|%@|%@|%@", NSStringFromClass(v.class), key, kp, NSStringFromClass(anim.class)];
-    if ([seen containsObject:sig] || lines > 160) return;
-    [seen addObject:sig]; lines++;
-    NSString *parent = v.superview ? NSStringFromClass(v.superview.class) : @"-";
-    [acc appendFormat:@"%@ (in %@) key=%@ keyPath=%@ %@ dur=%.2f size=%@\n", NSStringFromClass(v.class), parent, key, kp,
-     NSStringFromClass(anim.class), anim.duration, NSStringFromCGSize(v.bounds.size)];
-    LGWriteDiagnostic(@"ios26ccstyle-anim-log.txt", acc);
+    LogCCAnimation((UIView *)d, anim, key);
 }
 
 DEFINE_HOOKS(ModuleFill,   CCKindModuleFill)
@@ -2653,7 +2682,7 @@ static void PruneOldLogs(void) {
     }
     for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:nil]) {
         if (![n hasPrefix:@"ios26ccstyle-"] && ![n hasPrefix:@"xenonglass-"]) continue;
-        if ([n containsString:@"guard"]) continue;   // an active crash-loop lockout must survive
+        if ([n containsString:@"guard"] || [n containsString:@"crashloop"]) continue;   // an active crash-loop lockout must survive
         NSString *path = [dir stringByAppendingPathComponent:n];
         NSDate *m = [fm attributesOfItemAtPath:path error:nil].fileModificationDate;
         if (m && m.timeIntervalSince1970 < prev) [fm removeItemAtPath:path error:nil];
@@ -2663,7 +2692,7 @@ static void PruneOldLogs(void) {
     for (NSString *legacy in @[@"/var/mobile/Library/Preferences", @"/var/mobile/Library/Accessibility"]) {
         for (NSString *n in [fm contentsOfDirectoryAtPath:legacy error:nil]) {
             if (![n hasPrefix:@"ios26ccstyle-"] && ![n hasPrefix:@"xenonglass-"]) continue;
-            if ([n containsString:@"guard"]) continue;
+            if ([n containsString:@"guard"] || [n containsString:@"crashloop"]) continue;
             NSString *path = [legacy stringByAppendingPathComponent:n];
             NSDate *m = [fm attributesOfItemAtPath:path error:nil].fileModificationDate;
             if (m && m.timeIntervalSince1970 < prev) [fm removeItemAtPath:path error:nil];
@@ -2748,10 +2777,14 @@ static void YieldControlCenterFromLiquidAss(void) {
 static NSString *LGHardwareModel(void) {
     size_t size = 0;
     if (sysctlbyname("hw.machine", NULL, &size, NULL, 0) != 0 || size == 0) return @"?";
-    char *buf = malloc(size);
+    char *buf = calloc(1, size + 1);   // sysctl does not promise a terminator
     if (!buf) return @"?";
     NSString *out = @"?";
-    if (sysctlbyname("hw.machine", buf, &size, NULL, 0) == 0) out = [NSString stringWithUTF8String:buf];
+    size_t got = size;
+    if (sysctlbyname("hw.machine", buf, &got, NULL, 0) == 0) {
+        buf[size] = '\0';
+        out = [NSString stringWithUTF8String:buf] ?: @"?";
+    }
     free(buf);
     return out;
 }
@@ -2762,8 +2795,9 @@ static void WriteCompatibilityReport(void) {
     [o appendFormat:@"ios %@\n", NSProcessInfo.processInfo.operatingSystemVersionString];
     [o appendFormat:@"model %@\n", LGHardwareModel()];
     UIScreen *s = UIScreen.mainScreen;
-    [o appendFormat:@"screen %.0fx%.0f @%.0fx\n", s.nativeBounds.size.width / s.nativeScale,
-        s.nativeBounds.size.height / s.nativeScale, s.nativeScale];
+    if (s) [o appendFormat:@"screen %.0fx%.0f @%.0fx\n", s.nativeBounds.size.width / MAX(1.0, s.nativeScale),
+            s.nativeBounds.size.height / MAX(1.0, s.nativeScale), s.nativeScale];
+    else [o appendString:@"screen ?\n"];
     [o appendFormat:@"accessibility reduce-motion=%d reduce-transparency=%d increase-contrast=%d low-power=%d\n",
         ReduceMotionOn(), ReduceTransparencyOn(), IncreaseContrastOn(), LowPowerOn()];
     [o appendFormat:@"renderer-ready=%d liquidass-installed=%d\n",
@@ -2784,17 +2818,61 @@ static void WriteCompatibilityReport(void) {
     LGWriteDiagnostic(@"ios26ccstyle-compat.txt", o);
 }
 
+// MARK: - Crash-loop guard ---------------------------------------------------
+// A constructor runs again every time SpringBoard restarts, so a build that kills SpringBoard loops the
+// device straight into safe mode. Four starts inside 90 s is not a respring, it is a loop: the tweak then
+// stays out of the way for that boot (stock Control Center, no hooks) and says why in
+// ios26ccstyle-guard.txt. The counter clears itself once a boot has stayed up.
+static NSString *const kBootStateName = @"ios26ccstyle-crashloop.state";
+
+static BOOL LGBootIsCrashLoop(void) {
+    NSString *path = [LGDiagnosticsDirectory() stringByAppendingPathComponent:kBootStateName];
+    NSArray *parts = [[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil]
+                         componentsSeparatedByString:@" "];
+    long count = 0;
+    double when = 0;
+    if (parts.count == 2) { count = (long)[parts[0] longLongValue]; when = [parts[1] doubleValue]; }
+    time_t now = time(NULL);
+    BOOL recent = when > 0 && (double)now - when < 90.0;
+    count = recent ? count + 1 : 1;
+    [[NSString stringWithFormat:@"%ld %ld", count, (long)now] writeToFile:path atomically:YES
+                                                               encoding:NSUTF8StringEncoding error:nil];
+    if (count < 4) return NO;
+    LGWriteDiagnostic(@"ios26ccstyle-guard.txt",
+        [NSString stringWithFormat:@"SpringBoard came back %ld times in under 90 s after this build was loaded,\n"
+                                   @"so the tweak is off for this boot: no hooks, stock Control Center.\n"
+                                   @"Nothing is changed on disk. A boot that stays up removes this lockout.\n", count]);
+    return YES;
+}
+
 __attribute__((constructor))
 static void IOS26CCStyleInit(void) {
     @autoreleasepool {
         if (![[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
+        if (LGBootIsCrashLoop()) return;
 
         PruneOldLogs();
         LoadPrefs();
-        WriteCompatibilityReport();
+
+        // A dylib constructor runs during dyld initialisation, before SpringBoard owns a UIApplication:
+        // UIScreen and the accessibility server are not up yet. Reading them here killed SpringBoard at
+        // launch (safe mode, Control Center never opened), so the report is built from the main queue
+        // once the app is actually running.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            @autoreleasepool {
+                @try { WriteCompatibilityReport(); } @catch (__unused NSException *e) {}
+            }
+        });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            YieldControlCenterFromLiquidAss();
-            WriteCompatibilityReport();   // the renderer marker is only meaningful a few seconds in
+            @autoreleasepool {
+                YieldControlCenterFromLiquidAss();
+                @try { WriteCompatibilityReport(); } @catch (__unused NSException *e) {}   // the renderer marker needs a few seconds
+            }
+        });
+        // Thirty seconds up: this boot is not a crash loop, so the next respring starts at one again.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [NSFileManager.defaultManager removeItemAtPath:
+                [LGDiagnosticsDirectory() stringByAppendingPathComponent:kBootStateName] error:nil];
         });
 
         // Accessibility changes take effect at once: they change what "motion" and "transparency"
@@ -2807,6 +2885,7 @@ static void IOS26CCStyleInit(void) {
         for (NSString *note in notes) {
             [[NSNotificationCenter defaultCenter] addObserverForName:note object:nil queue:NSOperationQueue.mainQueue
                                                          usingBlock:^(__unused NSNotification *n) {
+                gReduceMotionAt = -1.0;   // the cached answer is stale by definition
                 LoadPrefs();
                 RestyleTrackedGeom();
                 PerfFlush();
