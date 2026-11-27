@@ -17,6 +17,9 @@
 #include <stdlib.h>
 #include <os/lock.h>
 #include <sys/sysctl.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/time.h>
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
@@ -199,6 +202,51 @@ static void LGWriteDiagnostic(NSString *name, NSString *text) {
     dispatch_async(queue, ^{
         [text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
     });
+}
+
+// MARK: - Launch breadcrumb ----------------------------------------------------
+// A constructor runs during dyld initialisation, before SpringBoard owns a UIApplication: one wrong
+// call there kills the boot, leaves no stack behind and drops the device into safe mode, so there is
+// nothing to read back afterwards unless the launch itself writes as it goes. Every constructor step
+// appends one line here through POSIX open/write — no NSString formatting, no UIKit, nothing that can
+// fail on its own — and the file is truncated at the start of each launch. The last line is therefore
+// the step that boot died in; a boot that reaches "alive: 30 s" finished the whole launch path.
+static NSString *const kLaunchLogName = @"ios26ccstyle-launch.txt";
+static NSString *const kLaunchPreviousName = @"ios26ccstyle-launch-previous.txt";
+static int gLaunchLogFD = -1;
+
+static void LGLaunchStep(const char *step) {
+    if (gLaunchLogFD < 0) return;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    char line[256];
+    int n = snprintf(line, sizeof(line), "%ld.%03ld %d %s\n",
+                     (long)tv.tv_sec, (long)(tv.tv_usec / 1000), (int)getpid(), step);
+    if (n <= 0) return;
+    size_t len = MIN((size_t)n, sizeof(line) - 1);   // snprintf may have truncated the line
+    ssize_t ignored = write(gLaunchLogFD, line, len);
+    (void)ignored;   // a breadcrumb that cannot be written must never take the launch down with it
+}
+
+// Called first in the constructor. The last launch is moved aside, not deleted: SpringBoard restarts
+// after a crash and would otherwise truncate the only record of the launch that killed it. After a
+// crash the current file holds the launch that is running now and the previous one holds the crashed.
+static void LGLaunchBegin(void) {
+    if (gLaunchLogFD >= 0) return;
+    NSString *directory = LGDiagnosticsDirectory();
+    NSString *path = [directory stringByAppendingPathComponent:kLaunchLogName];
+    NSString *previous = [directory stringByAppendingPathComponent:kLaunchPreviousName];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    [fm removeItemAtPath:previous error:nil];
+    [fm moveItemAtPath:path toPath:previous error:nil];   // nothing to rotate on the first launch
+    gLaunchLogFD = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    LGLaunchStep("begin");
+}
+
+static void LGLaunchEnd(void) {
+    if (gLaunchLogFD < 0) return;
+    close(gLaunchLogFD);
+    gLaunchLogFD = -1;
 }
 
 // MARK: - Frame-time counters -------------------------------------------------
@@ -2682,7 +2730,9 @@ static void PruneOldLogs(void) {
     }
     for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:nil]) {
         if (![n hasPrefix:@"ios26ccstyle-"] && ![n hasPrefix:@"xenonglass-"]) continue;
-        if ([n containsString:@"guard"] || [n containsString:@"crashloop"]) continue;   // an active crash-loop lockout must survive
+        // An active crash-loop lockout and the launch breadcrumb must survive: both are what a boot
+        // that never came up leaves behind to be read.
+        if ([n containsString:@"guard"] || [n containsString:@"crashloop"] || [n containsString:@"launch"]) continue;
         NSString *path = [dir stringByAppendingPathComponent:n];
         NSDate *m = [fm attributesOfItemAtPath:path error:nil].fileModificationDate;
         if (m && m.timeIntervalSince1970 < prev) [fm removeItemAtPath:path error:nil];
@@ -2692,7 +2742,7 @@ static void PruneOldLogs(void) {
     for (NSString *legacy in @[@"/var/mobile/Library/Preferences", @"/var/mobile/Library/Accessibility"]) {
         for (NSString *n in [fm contentsOfDirectoryAtPath:legacy error:nil]) {
             if (![n hasPrefix:@"ios26ccstyle-"] && ![n hasPrefix:@"xenonglass-"]) continue;
-            if ([n containsString:@"guard"] || [n containsString:@"crashloop"]) continue;
+            if ([n containsString:@"guard"] || [n containsString:@"crashloop"] || [n containsString:@"launch"]) continue;
             NSString *path = [legacy stringByAppendingPathComponent:n];
             NSDate *m = [fm attributesOfItemAtPath:path error:nil].fileModificationDate;
             if (m && m.timeIntervalSince1970 < prev) [fm removeItemAtPath:path error:nil];
@@ -2848,35 +2898,59 @@ static BOOL LGBootIsCrashLoop(void) {
 __attribute__((constructor))
 static void IOS26CCStyleInit(void) {
     @autoreleasepool {
-        if (![[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
-        if (LGBootIsCrashLoop()) return;
+        // Every step below is named in ios26ccstyle-launch.txt before it runs: if SpringBoard safe-modes
+        // before Control Center is ever opened, the last line of that file is the step that killed it.
+        LGLaunchBegin();
+        LGLaunchStep("bundle check");
+        if (![[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
+            LGLaunchStep("not SpringBoard, nothing to do");
+            LGLaunchEnd();
+            return;
+        }
+        LGLaunchStep("boot guard");
+        if (LGBootIsCrashLoop()) {
+            LGLaunchStep("crash-loop lockout: no hooks this boot");
+            LGLaunchEnd();
+            return;
+        }
 
+        LGLaunchStep("prune logs");
         PruneOldLogs();
+        LGLaunchStep("load prefs");
         LoadPrefs();
 
         // A dylib constructor runs during dyld initialisation, before SpringBoard owns a UIApplication:
         // UIScreen and the accessibility server are not up yet. Reading them here killed SpringBoard at
         // launch (safe mode, Control Center never opened), so the report is built from the main queue
         // once the app is actually running.
+        LGLaunchStep("defer compat report");
         dispatch_async(dispatch_get_main_queue(), ^{
+            LGLaunchStep("main queue: compat report");
             @autoreleasepool {
                 @try { WriteCompatibilityReport(); } @catch (__unused NSException *e) {}
             }
+            LGLaunchStep("main queue: compat report done");
         });
+        LGLaunchStep("defer 4 s takeover + report");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            LGLaunchStep("alive: 4 s");
             @autoreleasepool {
                 YieldControlCenterFromLiquidAss();
                 @try { WriteCompatibilityReport(); } @catch (__unused NSException *e) {}   // the renderer marker needs a few seconds
             }
         });
         // Thirty seconds up: this boot is not a crash loop, so the next respring starts at one again.
+        LGLaunchStep("defer 30 s boot-ok");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            LGLaunchStep("alive: 30 s, launch path clean");
+            LGLaunchEnd();
             [NSFileManager.defaultManager removeItemAtPath:
                 [LGDiagnosticsDirectory() stringByAppendingPathComponent:kBootStateName] error:nil];
         });
 
         // Accessibility changes take effect at once: they change what "motion" and "transparency"
         // mean for this look, and keeping a style that contradicts them is the wrong answer.
+        LGLaunchStep("accessibility observers");
         NSArray<NSString *> *notes = @[
             UIAccessibilityReduceMotionStatusDidChangeNotification,
             UIAccessibilityReduceTransparencyStatusDidChangeNotification,
@@ -2892,31 +2966,51 @@ static void IOS26CCStyleInit(void) {
             }];
         }
 
+        LGLaunchStep("hook CCUIContentModuleBackgroundView");
         Install_ModuleFill  ("CCUIContentModuleBackgroundView");
+        LGLaunchStep("hook CCUIContentModuleContentContainerView");
         Install_Container   ("CCUIContentModuleContentContainerView");
+        LGLaunchStep("hook CCUIControlTemplateView");
         Install_Template    ("CCUIControlTemplateView");
+        LGLaunchStep("hook CCUIButtonModuleView");
         Install_ButtonModule("CCUIButtonModuleView");
+        LGLaunchStep("hook CCUIAccessoryButton");
         Install_Accessory   ("CCUIAccessoryButton");
+        LGLaunchStep("hook CCUIPowerButton");
         Install_Power       ("CCUIPowerButton");
+        LGLaunchStep("hook CCUIRoundButton");
         Install_Round       ("CCUIRoundButton");
+        LGLaunchStep("hook CCUIContinuousSliderView");
         Install_Slider      ("CCUIContinuousSliderView");
+        LGLaunchStep("hook CCUISteppedSliderView");
         Install_Stepped     ("CCUISteppedSliderView");
+        LGLaunchStep("hook CALayer addAnimation");
         InstallHook("CALayer", @selector(addAnimation:forKey:), (IMP)new_addAnimation, (IMP *)&orig_addAnimation);
+        LGLaunchStep("hook CCUIControlTemplateView touch");
         InstallTouch_Template("CCUIControlTemplateView");
+        LGLaunchStep("hook CCUIButtonModuleView touch");
         InstallTouch_ButtonModule("CCUIButtonModuleView");
+        LGLaunchStep("hook CCUIRoundButton touch");
         InstallTouch_Round("CCUIRoundButton");
+        LGLaunchStep("hook CCUIContinuousSliderView touch");
         InstallTouch_Slider("CCUIContinuousSliderView");
+        LGLaunchStep("hook UIWindow sendEvent");
         InstallHook("UIWindow", @selector(sendEvent:), (IMP)new_win_sendEvent, (IMP *)&orig_win_sendEvent);
+        LGLaunchStep("hook MTMaterialView setAlpha");
         InstallHook("MTMaterialView", @selector(setAlpha:), (IMP)hook_setAlpha, (IMP *)&orig_setAlpha);
         // Only the Control Center pager: it was hooked on UIScrollView, so every scroll view in
         // SpringBoard (home screen, apps, menus) paid for two hooks that then bailed out on the
         // class-name check in ApplyPageScrollTo.
+        LGLaunchStep("hook CCUIIconScrollView layout");
         InstallHook("CCUIIconScrollView", @selector(layoutSubviews), (IMP)new_sv_ls, (IMP *)&orig_sv_ls);
+        LGLaunchStep("hook CCUIIconScrollView notifyDidScroll");
         InstallHook("CCUIIconScrollView", NSSelectorFromString(@"_notifyDidScroll"), (IMP)new_sv_nds, (IMP *)&orig_sv_nds);
 
+        LGLaunchStep("prefs notification");
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         PrefsChanged,
                                         (__bridge CFStringRef)kReloadNotification,
                                         NULL, CFNotificationSuspensionBehaviorCoalesce);
+        LGLaunchStep("done");
     }
 }

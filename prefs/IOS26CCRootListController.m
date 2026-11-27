@@ -201,6 +201,8 @@ static BOOL RunTool(NSArray<NSString *> *paths, NSArray<NSString *> *args) {
         @[@"style report", [dir stringByAppendingString:@"ios26ccstyle-style.txt"]],
         @[@"frame times", [dir stringByAppendingString:@"ios26ccstyle-perf.txt"]],
         @[@"compatibility", [dir stringByAppendingString:@"ios26ccstyle-compat.txt"]],
+        @[@"launch breadcrumb", [dir stringByAppendingString:@"ios26ccstyle-launch.txt"]],
+        @[@"previous launch breadcrumb", [dir stringByAppendingString:@"ios26ccstyle-launch-previous.txt"]],
         @[@"renderer breadcrumb", [dir stringByAppendingString:@"xenonglass-breadcrumb.txt"]],
     ];
     NSMutableString *all = [NSMutableString string];

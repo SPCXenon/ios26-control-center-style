@@ -21,6 +21,14 @@ The tweak also cannot loop the device into safe mode any more: four SpringBoard 
 means the build itself is what is killing it, so it stays out of the way for that boot (no hooks,
 stock Control Center) and says so in `ios26ccstyle-guard.txt`. A boot that stays up clears it.
 
+The constructor cause above was inferred from the diff, not from a crash log. To measure it instead,
+the constructor now names every step it is about to run in `ios26ccstyle-launch.txt` (POSIX
+`open`/`write`, no UIKit, fresh file at each launch). After a safe mode the last line is the step that
+boot died in, and a boot that reaches `alive: 30 s, launch path clean` finished the whole launch path —
+that file, not the theory, is what tells which call killed SpringBoard. A launch that ends in a plain
+respring is rotated to `ios26ccstyle-launch-previous.txt` first, because the restarted SpringBoard
+would otherwise overwrite the only record of the crash. Both files are in Settings ▸ Open logs.
+
 ## Xperimental — reference pass, diagnostics, presets, robustness
 
 ### Look (measured values, not adjectives)

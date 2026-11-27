@@ -28,6 +28,7 @@ iOS 26 CC Style ▸ Open logs** (or **Compatibility report** for the first one).
 | File | What it answers |
 |---|---|
 | `ios26ccstyle-compat.txt` | build, device, screen, accessibility state, renderer marker, Liquid (Gl)ass detection, switches, which hooked classes exist |
+| `ios26ccstyle-launch.txt`, `-launch-previous.txt` | every step of the last SpringBoard launch from the constructor, and the launch before it (kept because a crash restarts SpringBoard and would overwrite it); the last line is the step a boot that safe-moded died in, `alive: 30 s, launch path clean` means the whole launch path finished |
 | `ios26ccstyle-style.txt` | one line per styled view: class, **profile**, radius, frame, on-screen rect, backdrop luminance, what was drawn |
 | `ios26ccstyle-perf.txt` | calls, average and worst ms for the style pass and the backdrop walk |
 | `ios26ccstyle-scroll.txt`, `-module-dump.txt`, `-tile-chain.txt`, `-expanded-*.txt`, `-edit.txt`, `-press.txt`, `-anim-log.txt` | view trees and animation inventory for the matching surface |
