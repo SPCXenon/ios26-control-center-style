@@ -542,9 +542,12 @@ float4 glassSample(texture2d<float> src, sampler s, float2 uv, constant Uniforms
     // iOS 27 glass is vivid: the colour of the page behind it comes through a little stronger
     float lum = dot(o.rgb, float3(0.2126, 0.7152, 0.0722));
     o.rgb = saturate(mix(float3(lum), o.rgb, 1.35));
-    // and lighter than what surrounds it: measured on the reference, a tile is about twice as bright as the
-    // dimmed page around it, with the hue of what is behind kept
-    o.rgb = saturate(o.rgb * 1.28 + 0.03);
+    // and lighter than what surrounds it. On the reference an off tile sits at about the same mid brightness
+    // whatever is behind it (a dark page lifted, a bright one held down), so the backdrop's brightness is
+    // squeezed into a mid range, hue kept: white labels stay readable over a bright widget.
+    lum = dot(o.rgb, float3(0.2126, 0.7152, 0.0722));
+    float goal = 0.13 + 0.42 * lum;
+    o.rgb = saturate(o.rgb * min(goal / max(lum, 0.02), 4.0) + 0.03);
     return o;
 }
 
