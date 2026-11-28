@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.19
+// IOS26CCStyle 0.4.20
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -23,7 +23,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.19"
+#define XC_VERSION "0.4.20"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -1160,31 +1160,48 @@ static void HideInnerGlass(UIView *root, UIView *keep, BOOL hide, int depth) {
     }
 }
 
-static void SyncPanelGlass(UIView *v, CGFloat radius, BOOL dark, BOOL want) {
-    CGSize sz = v.bounds.size;
-    BOOL expanded = want && sz.height > 240.0 && MIN(sz.width, sz.height) > 200.0;
-    XCGlassView *pg = objc_getAssociatedObject(v, kPanelGlassKey);
-    BOOL fullGlass = NO;   // a glass that already covers the whole panel (the volume panel's)
-    for (UIView *s in v.subviews) {
-        if (s != pg && [s isKindOfClass:XCGlassView.class] && CGRectEqualToRect(s.frame, v.bounds)) fullGlass = YES;
+// The card of an expanded module: the shallowest view the system rounds and clips that is big enough to be a
+// panel (Now Playing's 299 x 534 card). The container around it can be page-high and holds other things
+// (the connectivity page's tiles have glass of their own), so it is not the card.
+static UIView *FindPanelCard(UIView *root, int depth) {
+    for (UIView *s in root.subviews) {
+        if ([s isKindOfClass:XCGlassView.class] || s.hidden || s.alpha < 0.9) continue;   // (the faded artwork blur is no card)
+        CGSize z = s.bounds.size;
+        if (s.layer.masksToBounds && s.layer.cornerRadius >= 14.0 && z.width >= 200.0 && z.height >= 240.0 && z.width < 400.0) return s;
+        if (depth < 5) { UIView *r = FindPanelCard(s, depth + 1); if (r) return r; }
     }
-    if (!expanded || fullGlass) {
+    return nil;
+}
+
+static void SyncPanelGlass(UIView *v, CGFloat radius, BOOL dark, BOOL want) {
+    XCGlassView *pg = objc_getAssociatedObject(v, kPanelGlassKey);
+    UIView *card = nil;
+    BOOL fullGlass = NO;   // a glass that already covers the whole panel (the volume panel's)
+    CGSize sz = v.bounds.size;
+    if (want && sz.height > 240.0 && MIN(sz.width, sz.height) > 200.0) {
+        for (UIView *s in v.subviews) {
+            if (s != pg && [s isKindOfClass:XCGlassView.class] && CGRectEqualToRect(s.frame, v.bounds)) fullGlass = YES;
+        }
+        if (!fullGlass) card = FindPanelCard(v, 0);
+    }
+    if (!card) {
         if (pg) { [pg removeFromSuperview]; objc_setAssociatedObject(v, kPanelGlassKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
-        if (!expanded) HideInnerGlass(v, nil, NO, 0);
+        if (!(want && sz.height > 240.0 && MIN(sz.width, sz.height) > 200.0)) HideInnerGlass(v, nil, NO, 0);
         return;
     }
     if (!pg) {
-        pg = [[XCGlassView alloc] initWithFrame:v.bounds];
+        pg = [[XCGlassView alloc] initWithFrame:card.bounds];
         objc_setAssociatedObject(v, kPanelGlassKey, pg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         if (!gGlassViews) gGlassViews = [NSHashTable weakObjectsHashTable];
         [gGlassViews addObject:pg];
     }
-    if (pg.superview != v || [v.subviews indexOfObject:pg] != 0) [v insertSubview:pg atIndex:0];
-    if (!CGRectEqualToRect(pg.frame, v.bounds)) pg.frame = v.bounds;
+    CGFloat r = MIN(card.layer.cornerRadius, MIN(card.bounds.size.width, card.bounds.size.height) / 2.0);
+    if (pg.superview != card || [card.subviews indexOfObject:pg] != 0) [card insertSubview:pg atIndex:0];
+    if (!CGRectEqualToRect(pg.frame, card.bounds)) pg.frame = card.bounds;
     pg.layer.cornerCurve = kCACornerCurveContinuous;
-    pg.layer.cornerRadius = radius;
+    pg.layer.cornerRadius = r;
     pg.layer.masksToBounds = YES;
-    pg.glassRadius = radius;
+    pg.glassRadius = r;
     pg.glassDark = dark;
     pg.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.01 + 0.05 * gGlass];
     [pg attachFilter];
