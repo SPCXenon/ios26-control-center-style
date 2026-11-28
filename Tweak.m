@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.20
+// IOS26CCStyle 0.4.21
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -23,7 +23,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.20"
+#define XC_VERSION "0.4.21"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -733,6 +733,9 @@ static void ApplyExtraBlur(UIView *v, CGRect b) {
 
 // Dims the system blur material behind a view so the wallpaper shows through.
 static const void *kGlassKey = &kGlassKey;   // on the MTMaterialView: its XCGlassView
+static const void *kPageHidKey = &kPageHidKey;     // on a page-sized material we hid (no glass for it)
+static const void *kOwnGlassKey = &kOwnGlassKey;   // on a tile / slider with no material of its own: our glass
+static const void *kTrackClearKey = &kTrackClearKey; // on a slider's dark track view: the colour we cleared
 static void SetMaterialAlpha(UIView *root, int depth, CGFloat alpha) {
     if (depth > 3) return;
     for (UIView *s in root.subviews) {
@@ -1103,6 +1106,16 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
     for (UIView *s in [root.subviews copy]) {
         if ([s isKindOfClass:XCGlassView.class]) continue;
         if (IsExactMaterial(s)) {
+            if (!want && objc_getAssociatedObject(s, kPageHidKey)) { s.hidden = NO; objc_setAssociatedObject(s, kPageHidKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+            // A page-high material is the backdrop the tiles of a page sit on, not a tile: glass on it is the
+            // extra pane behind the connectivity tiles. The tiles carry their own glass.
+            CGFloat wh = root.window ? root.window.bounds.size.height : 0.0;
+            if (want && wh > 1.0 && s.bounds.size.height > wh * 0.7) {
+                RemoveGlass(s);
+                if (!s.hidden) s.hidden = YES;
+                objc_setAssociatedObject(s, kPageHidKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                continue;
+            }
             if (!want || s.bounds.size.width < 30.0 || s.bounds.size.height < 30.0) { RemoveGlass(s); continue; }
             XCGlassView *g = objc_getAssociatedObject(s, kGlassKey);
             if (!g) {
@@ -1208,9 +1221,91 @@ static void SyncPanelGlass(UIView *v, CGFloat radius, BOOL dark, BOOL want) {
     HideInnerGlass(v, pg, YES, 0);
 }
 
+// Some tiles have no material of their own (Flashlight and the other controls on a shared page), and the
+// slider track is a plain dark view: both stayed black with no tint. They get a glass of their own at the
+// bottom of the view, with the same veil as every other tile.
+static BOOL SubtreeHasGlass(UIView *root, UIView *skip, int depth) {
+    if (depth > 2) return NO;
+    for (UIView *s in root.subviews) {
+        if (s == skip) continue;
+        if ([s isKindOfClass:XCGlassView.class]) { if (!s.hidden) return YES; continue; }
+        if (SubtreeHasGlass(s, skip, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+// A glass of the tile's own size behind it, on the same level or higher up (the single-tile modules keep
+// theirs on the container).
+static BOOL AncestorGlassCovers(UIView *v) {
+    UIView *a = v.superview;
+    CGSize vs = v.bounds.size;
+    for (int i = 0; a && i < 4; i++, a = a.superview) {
+        for (UIView *s in a.subviews) {
+            if (![s isKindOfClass:XCGlassView.class] || s.hidden) continue;
+            CGRect r = [v convertRect:s.bounds fromView:s];
+            if (fabs(r.size.width - vs.width) <= 10.0 && fabs(r.size.height - vs.height) <= 10.0 &&
+                fabs(r.origin.x) <= 10.0 && fabs(r.origin.y) <= 10.0) return YES;
+        }
+    }
+    return NO;
+}
+
+static void ClearSliderTrack(UIView *v, BOOL clear) {
+    for (UIView *s in v.subviews) {
+        if ([s isKindOfClass:XCGlassView.class]) continue;
+        UIColor *saved = objc_getAssociatedObject(s, kTrackClearKey);
+        if (!clear) {
+            if (saved) { s.backgroundColor = saved; objc_setAssociatedObject(s, kTrackClearKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+            continue;
+        }
+        if (saved) { if (s.backgroundColor) s.backgroundColor = nil; continue; }
+        CGFloat w = 0, a = 0;
+        UIColor *c = s.backgroundColor;
+        if (c && [c getWhite:&w alpha:&a] && w < 0.25 && a > 0.4 &&
+            s.bounds.size.width >= v.bounds.size.width * 0.9 && s.bounds.size.height >= v.bounds.size.height * 0.9) {
+            objc_setAssociatedObject(s, kTrackClearKey, c, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            s.backgroundColor = nil;
+        }
+    }
+}
+
+static void SyncOwnGlass(UIView *v, CGFloat radius, BOOL dark, BOOL want, BOOL slider) {
+    XCGlassView *g = objc_getAssociatedObject(v, kOwnGlassKey);
+    BOOL need = want && v.bounds.size.width >= 30.0 && v.bounds.size.height >= 30.0;
+    if (need && !slider && v.bounds.size.height > 240.0) need = NO;   // expanded content is the panel's business
+    if (need && SubtreeHasGlass(v, g, 0)) need = NO;
+    if (need && !slider && AncestorGlassCovers(v)) need = NO;
+    if (!need) {
+        if (g) { [g removeFromSuperview]; objc_setAssociatedObject(v, kOwnGlassKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+        if (slider) ClearSliderTrack(v, NO);
+        return;
+    }
+    if (!g) {
+        g = [[XCGlassView alloc] initWithFrame:v.bounds];
+        objc_setAssociatedObject(v, kOwnGlassKey, g, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (!gGlassViews) gGlassViews = [NSHashTable weakObjectsHashTable];
+        [gGlassViews addObject:g];
+    }
+    if (slider) ClearSliderTrack(v, YES);
+    if (g.superview != v || [v.subviews indexOfObject:g] != 0) [v insertSubview:g atIndex:0];
+    if (!CGRectEqualToRect(g.frame, v.bounds)) g.frame = v.bounds;
+    g.layer.cornerCurve = kCACornerCurveContinuous;
+    g.layer.cornerRadius = radius;
+    g.layer.masksToBounds = YES;
+    g.glassRadius = radius;
+    g.glassDark = dark;
+    g.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.01 + 0.05 * gGlass];
+    [g attachFilter];
+}
+
 static void SyncGlass(UIView *v, CCKind kind, CGFloat radius, BOOL dark, BOOL enabled) {
-    if (kind != CCKindModuleFill && kind != CCKindContainer) return;
     BOOL want = enabled && gRefract && GlassRendererReady();
+    if (kind == CCKindModule || kind == CCKindSlider) {
+        if (kind == CCKindSlider) SyncGlassIn(v, want, radius, dark, 0);   // a track material of its own, if the system has one
+        SyncOwnGlass(v, radius, dark, want, kind == CCKindSlider);
+        return;
+    }
+    if (kind != CCKindModuleFill && kind != CCKindContainer) return;
     SyncGlassIn(v, want, radius, dark, 0);
     if (kind == CCKindContainer) SyncPanelGlass(v, radius, dark, want);
 }
@@ -1269,6 +1364,7 @@ static void RestoreStock(UIView *v) {
     objc_setAssociatedObject(v, kStyledKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     SyncGlassIn(v, NO, 0.0, IsDarkUI(v), 0);
     SyncPanelGlass(v, 0.0, NO, NO);
+    SyncOwnGlass(v, 0.0, NO, NO, YES);
     SetMaterialAlpha(v, 0, 1.0);
 }
 
@@ -1404,7 +1500,7 @@ static void DumpViewOnce(UIView *v, CGFloat radius, const char *tag) {
     static NSUInteger dumpGen = (NSUInteger)-1;
     static NSMutableString *acc; static int dumped;
     static NSMapTable *seen;   // view -> last dumped on/off state, so both states of a tile are captured
-    if (!gDebugDump || v.bounds.size.height > 200) return;
+    if (!gDebugDump || (v.bounds.size.height > 200 && strcmp(tag, "slider") != 0)) return;
     if (dumpGen != gGeneration) { dumpGen = gGeneration; acc = [NSMutableString string]; dumped = 0; seen = [NSMapTable weakToStrongObjectsMapTable]; }
     NSNumber *st = @(OnFillVisible(v, 0));
     NSNumber *prev = [seen objectForKey:v];
@@ -1772,6 +1868,9 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     // Diagnostics isolation: decor off leaves glass only, glass off leaves decor only, both off is
     // stock. That is how a wrong-looking tile gets bisected on the phone.
     BOOL decorOn = gIsoDecor && !opaque;
+    // the page-high container behind a page of tiles has no rim: each tile draws its own
+    if ((kind == CCKindContainer || kind == CCKindModuleFill) && v.window && b.size.height > v.window.bounds.size.height * 0.7) decorOn = NO;
+    if (kind == CCKindSlider) DumpViewOnce(v, r, "slider");
     if (decorOn) ApplyDecor(v, b, r);
     else HideDecor(v);
 
