@@ -40,6 +40,9 @@ Related fixes from the same pass:
   re-entrancy guard, and it stops following a radius as soon as the caller sets one of its own;
 - `prefsSchema` stamps the look schema but rewrites nothing: no default changed between the two schemas,
   so there is nothing to move, and a value the user tuned is never overwritten;
+- an enabled tile is translucent glass with white in it, not a white card: the on-fill drops from
+  0.92 … 0.97 to 0.78 … 0.86 and is only ever painted on a tile, so the rim, the sheen and the
+  wallpaper stay visible through it instead of a white capsule sitting on a second one;
 - Increase Contrast raises the rim, sheen, streak and edge of the same look instead of changing it;
 - class-derived predicates (slider, exact material) are cached per class, removing a string build from
   every layout pass;

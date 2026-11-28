@@ -1638,18 +1638,29 @@ static UILabel *FirstLabel(UIView *v, int depth) {
     return nil;
 }
 
+// Only a tile is filled. An expanded module is a panel and has its glass of its own; filling it turned
+// the media card into a white sheet (the artwork area and the labels sat on top of one).
+static BOOL IsTileSized(UIView *v) {
+    CGSize z = v.bounds.size;
+    return z.height >= 20.0 && z.height <= 160.0 && z.width <= 400.0;
+}
+
 // Returns the number of system on-fills that were restyled.
 // How white the fill has to be is not a constant: a dark label needs a light tile, and the darker the
 // wallpaper behind the tile the more white it takes to keep that label readable. Bright wallpapers
 // therefore get a thinner fill, which is also what the reference looks like.
+//
+// It stays translucent on purpose. The reference reads an enabled tile as *glass with white in it*: the
+// rim, the sheen and the wallpaper still show through. A near-opaque fill (0.92 … 0.97) covered all of
+// that and left the tile looking like a white card laid over a second, darker capsule.
 static CGFloat OnFillAlpha(UIView *tile, BOOL dark) {
     CGFloat lum = BackdropLuminanceFor(tile);
-    CGFloat base = (dark ? 0.92 : 0.94) - 0.06 * gGlass;
-    return MIN(0.97, MAX(0.62, base - 0.22 * (lum - 0.35)));
+    CGFloat base = (dark ? 0.78 : 0.82) - 0.05 * gGlass;
+    return MIN(0.86, MAX(0.50, base - 0.18 * (lum - 0.35)));
 }
 
 static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
-    if (depth > 4) return 0;
+    if (depth > 4 || !IsTileSized(v)) return 0;
     int n = 0;
     for (UIView *s in v.subviews) {
         NSString *sn = NSStringFromClass(s.class);
@@ -1690,6 +1701,7 @@ static int StyleOnFills(UIView *v, CGFloat radius, BOOL dark, int depth) {
 // the other enabled tiles, and remove it again when the label turns light.
 static void SyncSynthFill(UIView *v, CGFloat radius, BOOL dark, BOOL systemFillVisible) {
     UIView *fill = objc_getAssociatedObject(v, kSynthFillKey);
+    if (!IsTileSized(v)) { if (fill && !fill.hidden) fill.hidden = YES; return; }   // panels are never filled
     UILabel *label = systemFillVisible ? nil : FirstLabel(v, 0);
     CGFloat w = 1.0, a = 0;
     BOOL enabledLook = label && [label.textColor getWhite:&w alpha:&a] && w < 0.4 && a > 0.3;
