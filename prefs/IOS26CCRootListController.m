@@ -45,7 +45,18 @@ extern char **environ;
 @end
 
 static NSString *const kDomain = @"com.xenon.ios26ccstyle";
+// Everything the tweak writes lives in its own directory under Apple's Logs. Only backboardd (root) can
+// create it, and when a sandbox profile refuses it the tweak falls back to the old Accessibility
+// directory, so the viewer asks the new path first and then the fallback, one file at a time.
 static NSString *const kLogDir = @"/var/mobile/Library/Logs/IOS26CCStyle/";
+static NSString *const kLegacyLogDir = @"/var/mobile/Library/Accessibility/";
+
+static NSString *LGLogFile(NSString *name) {
+    NSString *path = [kLogDir stringByAppendingString:name];
+    if ([NSFileManager.defaultManager fileExistsAtPath:path]) return path;
+    NSString *legacy = [kLegacyLogDir stringByAppendingString:name];
+    return [NSFileManager.defaultManager fileExistsAtPath:legacy] ? legacy : path;
+}
 
 // The whole preference domain, so the Settings page can be copied to another device (or to me) and
 // pasted back. Only this tweak's domain is read or written.
@@ -133,7 +144,7 @@ static NSDictionary *PresetFor(NSString *name) {
 }
 
 - (void)showCompatReport {
-    NSString *t = [NSString stringWithContentsOfFile:[kLogDir stringByAppendingString:@"ios26ccstyle-compat.txt"]
+    NSString *t = [NSString stringWithContentsOfFile:LGLogFile(@"ios26ccstyle-compat.txt")
                                             encoding:NSUTF8StringEncoding error:NULL];
     IOS26CCLogViewController *vc = [IOS26CCLogViewController new];
     vc.title = @"Compatibility";
@@ -185,29 +196,30 @@ static BOOL RunTool(NSArray<NSString *> *paths, NSArray<NSString *> *args) {
 }
 
 - (void)viewLogs {
-    NSString *dir = @"/var/mobile/Library/Logs/IOS26CCStyle/";
     NSArray<NSArray<NSString *> *> *files = @[
-        @[@"crash report", [dir stringByAppendingString:@"xenonglass-crash.log"]],
-        @[@"previous session log", [dir stringByAppendingString:@"xenonglass-previous.log"]],
-        @[@"current session log", [dir stringByAppendingString:@"xenonglass.log"]],
-        @[@"view dump", [dir stringByAppendingString:@"ios26ccstyle-module-dump.txt"]],
-        @[@"tile chain", [dir stringByAppendingString:@"ios26ccstyle-tile-chain.txt"]],
-        @[@"page scroll", [dir stringByAppendingString:@"ios26ccstyle-scroll.txt"]],
-        @[@"edit mode", [dir stringByAppendingString:@"ios26ccstyle-edit.txt"]],
-        @[@"press", [dir stringByAppendingString:@"ios26ccstyle-press.txt"]],
-        @[@"now playing tree", [dir stringByAppendingString:@"ios26ccstyle-expanded-np.txt"]],
-        @[@"expanded module tree", [dir stringByAppendingString:@"ios26ccstyle-expanded-dump.txt"]],
-        @[@"stock animations", [dir stringByAppendingString:@"ios26ccstyle-anim-log.txt"]],
-        @[@"style report", [dir stringByAppendingString:@"ios26ccstyle-style.txt"]],
-        @[@"frame times", [dir stringByAppendingString:@"ios26ccstyle-perf.txt"]],
-        @[@"compatibility", [dir stringByAppendingString:@"ios26ccstyle-compat.txt"]],
-        @[@"launch breadcrumb", [dir stringByAppendingString:@"ios26ccstyle-launch.txt"]],
-        @[@"previous launch breadcrumb", [dir stringByAppendingString:@"ios26ccstyle-launch-previous.txt"]],
-        @[@"renderer breadcrumb", [dir stringByAppendingString:@"xenonglass-breadcrumb.txt"]],
+        @[@"crash report", @"xenonglass-crash.log"],
+        @[@"previous session log", @"xenonglass-previous.log"],
+        @[@"current session log", @"xenonglass.log"],
+        @[@"renderer safe mode log", @"xenonglass-safemode.log"],
+        @[@"view dump", @"ios26ccstyle-module-dump.txt"],
+        @[@"tile chain", @"ios26ccstyle-tile-chain.txt"],
+        @[@"page scroll", @"ios26ccstyle-scroll.txt"],
+        @[@"edit mode", @"ios26ccstyle-edit.txt"],
+        @[@"press", @"ios26ccstyle-press.txt"],
+        @[@"now playing tree", @"ios26ccstyle-expanded-np.txt"],
+        @[@"expanded module tree", @"ios26ccstyle-expanded-dump.txt"],
+        @[@"stock animations", @"ios26ccstyle-anim-log.txt"],
+        @[@"style report", @"ios26ccstyle-style.txt"],
+        @[@"frame times", @"ios26ccstyle-perf.txt"],
+        @[@"compatibility", @"ios26ccstyle-compat.txt"],
+        @[@"launch breadcrumb", @"ios26ccstyle-launch.txt"],
+        @[@"previous launch breadcrumb", @"ios26ccstyle-launch-previous.txt"],
+        @[@"renderer breadcrumb", @"xenonglass-breadcrumb.txt"],
     ];
-    NSMutableString *all = [NSMutableString string];
+    NSMutableString *all = [NSMutableString stringWithFormat:@"log directory: %@\n\n", kLogDir];
     for (NSArray<NSString *> *f in files) {
-        NSString *t = [NSString stringWithContentsOfFile:f[1] encoding:NSUTF8StringEncoding error:NULL];
+        NSString *path = LGLogFile(f[1]);
+        NSString *t = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
         if (t.length > 40000) t = [@"...\n" stringByAppendingString:[t substringFromIndex:t.length - 40000]];
         [all appendFormat:@"===== %@ =====\n%@\n\n", f[0], t.length ? t : @"(missing, empty or not readable from Settings)"];
     }
