@@ -3,6 +3,7 @@
 #import <spawn.h>
 #import <UIKit/UIKit.h>
 #import <CoreFoundation/CoreFoundation.h>
+#import <sys/utsname.h>
 
 extern char **environ;
 
@@ -56,6 +57,45 @@ static NSString *LGLogFile(NSString *name) {
     if ([NSFileManager.defaultManager fileExistsAtPath:path]) return path;
     NSString *legacy = [kLegacyLogDir stringByAppendingString:name];
     return [NSFileManager.defaultManager fileExistsAtPath:legacy] ? legacy : path;
+}
+
+// One list for the viewer and for the archive, so a file added to one is not missing from the other.
+static NSArray<NSArray<NSString *> *> *LGLogEntries(void) {
+    return @[
+        @[@"crash report", @"xenonglass-crash.log"],
+        @[@"previous session log", @"xenonglass-previous.log"],
+        @[@"current session log", @"xenonglass.log"],
+        @[@"renderer safe mode log", @"xenonglass-safemode.log"],
+        @[@"view dump", @"ios26ccstyle-module-dump.txt"],
+        @[@"tile chain", @"ios26ccstyle-tile-chain.txt"],
+        @[@"page scroll", @"ios26ccstyle-scroll.txt"],
+        @[@"edit mode", @"ios26ccstyle-edit.txt"],
+        @[@"press", @"ios26ccstyle-press.txt"],
+        @[@"now playing tree", @"ios26ccstyle-expanded-np.txt"],
+        @[@"expanded module tree", @"ios26ccstyle-expanded-dump.txt"],
+        @[@"stock animations", @"ios26ccstyle-anim-log.txt"],
+        @[@"style report", @"ios26ccstyle-style.txt"],
+        @[@"frame times", @"ios26ccstyle-perf.txt"],
+        @[@"compatibility", @"ios26ccstyle-compat.txt"],
+        @[@"hook report", @"ios26ccstyle-hooks.txt"],
+        @[@"calibration", @"ios26ccstyle-calibrate.txt"],
+        @[@"look migration", @"ios26ccstyle-migrated.txt"],
+        @[@"launch breadcrumb", @"ios26ccstyle-launch.txt"],
+        @[@"previous launch breadcrumb", @"ios26ccstyle-launch-previous.txt"],
+        @[@"renderer breadcrumb", @"xenonglass-breadcrumb.txt"],
+    ];
+}
+
+// The build a report came from, so a screenshot and its log are never separated from their version.
+static NSString *LGFingerprint(void) {
+    struct utsname info = {};
+    uname(&info);
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
+    NSArray *names = [[NSFileManager.defaultManager contentsOfDirectoryAtPath:kLogDir error:NULL]
+                         sortedArrayUsingSelector:@selector(compare:)];
+    return [NSString stringWithFormat:@"iOS 26 CC Style %@\ndevice: %s\niOS: %@\nlog dir: %@\nlogs: %@\n",
+            version, info.machine[0] ? info.machine : "?", UIDevice.currentDevice.systemVersion, kLogDir,
+            names.count ? [names componentsJoinedByString:@", "] : @"(unreadable)"];
 }
 
 // The whole preference domain, so the Settings page can be copied to another device (or to me) and
@@ -196,26 +236,7 @@ static BOOL RunTool(NSArray<NSString *> *paths, NSArray<NSString *> *args) {
 }
 
 - (void)viewLogs {
-    NSArray<NSArray<NSString *> *> *files = @[
-        @[@"crash report", @"xenonglass-crash.log"],
-        @[@"previous session log", @"xenonglass-previous.log"],
-        @[@"current session log", @"xenonglass.log"],
-        @[@"renderer safe mode log", @"xenonglass-safemode.log"],
-        @[@"view dump", @"ios26ccstyle-module-dump.txt"],
-        @[@"tile chain", @"ios26ccstyle-tile-chain.txt"],
-        @[@"page scroll", @"ios26ccstyle-scroll.txt"],
-        @[@"edit mode", @"ios26ccstyle-edit.txt"],
-        @[@"press", @"ios26ccstyle-press.txt"],
-        @[@"now playing tree", @"ios26ccstyle-expanded-np.txt"],
-        @[@"expanded module tree", @"ios26ccstyle-expanded-dump.txt"],
-        @[@"stock animations", @"ios26ccstyle-anim-log.txt"],
-        @[@"style report", @"ios26ccstyle-style.txt"],
-        @[@"frame times", @"ios26ccstyle-perf.txt"],
-        @[@"compatibility", @"ios26ccstyle-compat.txt"],
-        @[@"launch breadcrumb", @"ios26ccstyle-launch.txt"],
-        @[@"previous launch breadcrumb", @"ios26ccstyle-launch-previous.txt"],
-        @[@"renderer breadcrumb", @"xenonglass-breadcrumb.txt"],
-    ];
+    NSArray<NSArray<NSString *> *> *files = LGLogEntries();
     NSMutableString *all = [NSMutableString stringWithFormat:@"log directory: %@\n\n", kLogDir];
     for (NSArray<NSString *> *f in files) {
         NSString *path = LGLogFile(f[1]);
@@ -227,6 +248,55 @@ static BOOL RunTool(NSArray<NSString *> *paths, NSArray<NSString *> *args) {
     vc.text = all;
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
     [self presentViewController:nav animated:YES completion:nil];
+}
+
+// Collecting a bug report used to mean copying a dozen files off the phone one at a time. This writes
+// one archive file with every log in it and hands it to the share sheet (AirDrop, Files, mail), so a
+// report is self-contained and complete instead of a trimmed transcript.
+- (void)collectLogs {
+    NSMutableString *all = [NSMutableString stringWithFormat:@"%@\n", LGFingerprint()];
+    for (NSArray<NSString *> *entry in LGLogEntries()) {
+        NSString *text = [NSString stringWithContentsOfFile:LGLogFile(entry[1])
+                                                  encoding:NSUTF8StringEncoding error:NULL];
+        if (text.length > 300000) text = [@"...\n" stringByAppendingString:[text substringFromIndex:text.length - 300000]];
+        [all appendFormat:@"===== %@ (%@) =====\n%@\n\n", entry[0], entry[1],
+            text.length ? text : @"(missing, empty or not readable)"];
+    }
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"IOS26CCStyle-logs.txt"];
+    if (![all writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL]) {
+        [self alertTitle:@"Could not write the archive" message:path];
+        return;
+    }
+    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[[NSURL fileURLWithPath:path]]
+                                                                     applicationActivities:nil];
+    share.popoverPresentationController.sourceView = self.view;
+    share.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds),
+                                                               CGRectGetMidY(self.view.bounds), 1.0, 1.0);
+    [self presentViewController:share animated:YES completion:nil];
+}
+
+- (void)copyFingerprint {
+    NSString *fingerprint = LGFingerprint();
+    UIPasteboard.generalPasteboard.string = fingerprint;
+    [self alertTitle:@"Fingerprint copied" message:fingerprint];
+}
+
+- (void)clearLogs {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Delete the logs?"
+        message:@"Every dump, report and renderer log is removed. The crash-loop guard, the launch breadcrumbs and the migration note are kept, because they are what a boot that never came up leaves behind."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+        NSFileManager *fm = NSFileManager.defaultManager;
+        for (NSString *name in [fm contentsOfDirectoryAtPath:kLogDir error:NULL]) {
+            if (![name hasPrefix:@"ios26ccstyle-"] && ![name hasPrefix:@"xenonglass-"]) continue;
+            if ([name containsString:@"guard"] || [name containsString:@"crashloop"] ||
+                [name containsString:@"launch"] || [name containsString:@"migrated"]) continue;
+            [fm removeItemAtPath:[kLogDir stringByAppendingPathComponent:name] error:NULL];
+        }
+        [self alertTitle:@"Logs deleted" message:@"Guard, breadcrumbs and the migration note were kept."];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)resetDefaults {

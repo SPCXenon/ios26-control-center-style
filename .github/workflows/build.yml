@@ -3,6 +3,20 @@ name: Build rootless tweak
 on:
   workflow_dispatch:
   push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned on purpose: the toolchain must not change under a build, and a green build today has to be the
+  # same build tomorrow. To move it, bump these two SHAs and push that as its own commit.
+  THEOS_SHA: 8167f59de02fd32cf45b16bfcb1330dfa5c9974c
+  SDKS_SHA: 0222fd5413cf4b9af096f37b4621afa2688572f7
 
 jobs:
   build:
@@ -13,20 +27,40 @@ jobs:
       - name: Install packaging tools
         run: brew install dpkg ldid xz
 
+      - name: Cache Theos and the iOS SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/theos
+            ${{ runner.temp }}/theos-sdks
+          key: theos-${{ env.THEOS_SHA }}-sdks-${{ env.SDKS_SHA }}
+
       - name: Install Theos
         run: |
-          git clone --recursive https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+          if [ ! -d "$RUNNER_TEMP/theos/makefiles" ]; then
+            git clone https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+            git -C "$RUNNER_TEMP/theos" checkout "$THEOS_SHA"
+            git -C "$RUNNER_TEMP/theos" submodule update --init --recursive
+          fi
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
 
       - name: Install iOS SDK with private frameworks
         run: |
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
-          git -C "$RUNNER_TEMP/theos-sdks" sparse-checkout set iPhoneOS16.5.sdk
+          if [ ! -d "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" ]; then
+            git clone --filter=blob:none --no-checkout https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
+            git -C "$RUNNER_TEMP/theos-sdks" checkout "$SDKS_SHA"
+            git -C "$RUNNER_TEMP/theos-sdks" sparse-checkout set iPhoneOS16.5.sdk
+          fi
           mkdir -p "$THEOS/sdks"
           cp -R "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
 
       - name: Lint sources
         run: python3 tools/lint.py
+
+      - name: Test pure logic
+        run: |
+          cc -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/lg_logic" tests/test_logic.c
+          "$RUNNER_TEMP/lg_logic"
 
       - name: Build package
         run: make clean package FINALPACKAGE=1
@@ -50,3 +84,21 @@ jobs:
         with:
           name: IOS26CCStyle-rootless-deb-v${{ env.PKG_VERSION }}
           path: packages/*.deb
+
+  # A tag is the only way a build leaves Actions: the .deb is attached to a release, so a version that
+  # was given to someone exists after the 90-day artifact window closes.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Attach the package to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*.deb
+          generate_release_notes: true

@@ -19,11 +19,23 @@ Settings → **iOS 26 CC Style** (PreferenceLoader preference bundle). Changes a
 *iOS 26 Frosted*, *Old dark* (the 0.4.x look) and *Reset all*. **Copy settings** / **Paste settings** move the
 whole preference domain as an XML plist, so a look can be reproduced exactly on another device.
 
-Prefs domain `com.xenon.ios26ccstyle`: enabled, styleModules, styleButtons, styleSliders, styleMenus, continuousCorners, sliderCapsule, maxRadius, rimColor, rimIntensity, rimWidth, fillColor, fillTint, sheen, innerRim, glow, extraBlur, bgBlur, reflect, edgeDark, dispersion, glassTint, glassBlurRadius, motion, pageSpring, pageSpeed, pageEffect, isoDecor, isoGlass, isoBlur, isoMotion, debugSampleGrid, debugDump, debugPerf. Darwin notification: `com.xenon.ios26ccstyle/reload`.
+Prefs domain `com.xenon.ios26ccstyle`: enabled, styleModules, styleButtons, styleSliders, styleMenus, continuousCorners, sliderCapsule, maxRadius, rimColor, rimIntensity, rimWidth, fillColor, fillTint, sheen, innerRim, glow, extraBlur, bgBlur, bgDim, reflect, edgeDark, dispersion, glassTint, glassBlurRadius, motion, pageSpring, pageSpeed, pageEffect, isoDecor, isoGlass, isoBlur, isoMotion, debugSampleGrid, debugDump, debugPerf, debugCalibrate, prefsSchema. Darwin notification: `com.xenon.ios26ccstyle/reload`.
+
+`prefsSchema` is written by the tweak, not by Settings, and it is a stamp rather than a rewrite: no stored
+look value is ever changed, because a number that matches a default is no proof the user did not choose
+it. A build that really changes a default migrates that one key only while it still holds the old default
+(`ios26ccstyle-migrated.txt` records it). Switches and behaviour settings are never touched.
+
+`ARCHITECTURE.md` records the Control Center view tree this tweak was built against, the rules that were
+learned from live dumps (page backdrop at 70 % of the window height, panel card vs page wrapper,
+slider tracks) and which file answers which question — read it before changing a heuristic.
 
 ## Diagnostics (on by default)
 Everything lands in `/var/mobile/Library/Logs/IOS26CCStyle` and is readable on the phone: **Settings ▸
-iOS 26 CC Style ▸ Open logs** (or **Compatibility report** for the first one).
+iOS 26 CC Style ▸ Open logs** (or **Compatibility report** for the first one). **Share all logs (one file)**
+writes every log into one document and opens the share sheet, so a report can be sent without a computer;
+**Copy build fingerprint** puts version, device, iOS and the log file list on the clipboard; **Delete logs**
+clears the dumps but keeps the guard, the launch breadcrumbs and the migration note.
 
 | File | What it answers |
 |---|---|
@@ -32,7 +44,11 @@ iOS 26 CC Style ▸ Open logs** (or **Compatibility report** for the first one).
 | `ios26ccstyle-style.txt` | one line per styled view: class, **profile**, radius, frame, on-screen rect, backdrop luminance, what was drawn |
 | `ios26ccstyle-perf.txt` | calls, average and worst ms for the style pass and the backdrop walk |
 | `ios26ccstyle-scroll.txt`, `-module-dump.txt`, `-tile-chain.txt`, `-expanded-*.txt`, `-edit.txt`, `-press.txt`, `-anim-log.txt` | view trees and animation inventory for the matching surface |
-| `xenonglass.log`, `xenonglass-breadcrumb.txt` | renderer session log, and the last host/surface before a draw (survives a crash) |
+| `ios26ccstyle-hooks.txt` | every hook that was installed, and every one that did not land with the reason (`missing class`, `missing selector`) |
+| `ios26ccstyle-guard.txt` | whether the crash-loop ladder stepped in, at which level, and what runs this boot |
+| `ios26ccstyle-calibrate.txt` | with *Tile/page colour calibration* on: mean tile colour next to mean page colour, per tile, so a build is compared to the reference as numbers |
+| `ios26ccstyle-migrated.txt` | the one-off look migration (`prefsSchema`) |
+| `xenonglass.log`, `xenonglass.log.1`, `xenonglass-breadcrumb.txt` | renderer session log (rotated at 512 KB), and the last host/surface before a draw (survives a crash) |
 
 **Isolation switches** draw one layer of the look at a time (decoration, refraction glass, extra blur,
 motion); all off is the stock Control Center. **Show sampling grid** makes the renderer draw a 10 × 10
@@ -51,11 +67,17 @@ the dark edge. Low Power Mode drops the purely decorative layers (sheen, corner 
 
 ## Performance
 `ios26ccstyle-perf.txt` carries a call count, an average and a worst case for the style pass and the
-backdrop walk. The scroll hooks bail out when the Control Center window is not visible, the display link
+backdrop walk. Class-derived answers (is this a slider, is this an exact material) are computed once per
+class and cached instead of rebuilding an `NSString` on every pass. The scroll hooks bail out when the Control Center window is not visible, the display link
 is invalidated when its pager goes away, and the backdrop walk is capped and rate limited.
 
 ## Build
-arm64e needs Apple's linker, so build with GitHub Actions (**Build rootless tweak**, every push). The workflow installs the Theos iOS 16.5 SDK (it contains the private `Preferences` framework stub) and fails if the package has a double `/var/jb` prefix or lacks the prefs bundle.
+arm64e needs Apple's linker, so build with GitHub Actions (**Build rootless tweak**, every push). The
+workflow pins Theos and the iOS 16.5 SDK to fixed commits (they are cached under that key, so a build does
+not depend on what upstream did today), runs the linter, runs the host logic tests
+(`tests/test_logic.c` against `common/LGLogic.h`), builds the package, and fails if the package has a
+double `/var/jb` prefix or lacks the prefs bundle. Pushing a `v*` tag attaches the `.deb` to a GitHub
+release, which is the only copy that outlives the artifact window.
 Download the `IOS26CCStyle-rootless-deb-v0.4.22` artifact, extract the `.deb`, install with Sileo/Filza, and respring.
 
 ## Refraction glass (backboardd)

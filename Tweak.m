@@ -25,6 +25,10 @@ static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
 #define XC_VERSION "0.4.22"
 
+// The parts of the decision making that need neither UIKit nor Foundation live in common/LGLogic.h,
+// so CI proves them on the build machine (tests/test_logic.c) instead of only on the phone.
+#include "common/LGLogic.h"
+
 // MARK: - Preferences ---------------------------------------------------------
 
 static BOOL    gEnabled, gSliderCapsule, gContinuous, gExtraBlur, gMotion, gPressGrow, gPageSpring, gShimmer;
@@ -68,7 +72,7 @@ static double PrefDouble(NSString *key, double def, double lo, double hi) {
         }
         CFRelease(v);
     }
-    return round(MAX(lo, MIN(hi, out)) * 100.0) / 100.0;   // sliders store long fractions; keep two decimals
+    return lgRound2(lgClamp(out, lo, hi));   // sliders store long fractions; keep two decimals
 }
 
 static BOOL PrefBool(NSString *key, BOOL def) {
@@ -115,8 +119,17 @@ static UIColor *ColorNamed(NSString *name) {
     return map[name] ?: map[@"white"];
 }
 
+// Set by the crash-loop ladder: the second boot in a loop runs without the renderer, so a look that
+// kills SpringBoard still leaves a styled (if unglazed) Control Center to inspect.
+static BOOL gBisectGlassOff;
+// Calibration: sample the rendered tile against the page behind it (Settings ▸ Diagnostics).
+static BOOL gCalibrate;
+
+static void LGMigratePrefs(void);   // defined with the diagnostics, called before the first read
+
 static void LoadPrefs(void) {
     CFPreferencesAppSynchronize((__bridge CFStringRef)kPrefsDomain);
+    LGMigratePrefs();
     gEnabled       = PrefBool(@"enabled", YES);
     gStyleModules  = PrefBool(@"styleModules", YES);
     gStyleButtons  = PrefBool(@"styleButtons", YES);
@@ -159,7 +172,8 @@ static void LoadPrefs(void) {
     gIsoMotion     = PrefBool(@"isoMotion", YES);
     gSampleGrid    = PrefBool(@"debugSampleGrid", NO);
     gPerfLog       = PrefBool(@"debugPerf", YES);
-    gRefract       = PrefBool(@"refraction", YES) && PrefBool(@"Renderer.Enabled", YES);
+    gCalibrate     = PrefBool(@"debugCalibrate", NO);
+    gRefract       = PrefBool(@"refraction", YES) && PrefBool(@"Renderer.Enabled", YES) && !gBisectGlassOff;
     gRimColor      = ColorNamed(PrefString(@"rimColor", @"white"));
     gFillColor     = ColorNamed(PrefString(@"fillColor", @"white"));
     gGeneration++;
@@ -202,7 +216,127 @@ static void LGWriteDiagnostic(NSString *name, NSString *text) {
     });
     NSString *path = [LGDiagnosticsDirectory() stringByAppendingPathComponent:name];
     dispatch_async(queue, ^{
+        // An unbounded dump is worse than no dump: unreadable on the phone, pruned only once per version,
+        // and the viewer trims it anyway. One rotation keeps the previous file for a before/after.
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSDictionary *attributes = [fm attributesOfItemAtPath:path error:nil];
+        if ([attributes[NSFileSize] unsignedLongLongValue] > 512ULL * 1024ULL) {
+            NSString *rotated = [path stringByAppendingString:@".1"];
+            [fm removeItemAtPath:rotated error:nil];
+            [fm moveItemAtPath:path toPath:rotated error:nil];
+        }
         [text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    });
+}
+
+// MARK: - Preference schema ---------------------------------------------------
+// The look is a set of tuned numbers, and a phone that stored them once keeps them forever: a build that
+// retunes the reference (0.4.18 … 0.4.22 did, several times) would only reach fresh installs. A stored
+// schema makes the upgrade explicit — the look keys are rewritten once per schema, while every switch
+// and behaviour setting stays exactly as the user had it.
+static const int kPrefsSchema = 1;
+
+// A migration may move a value the tweak itself put there. It must never touch a value a user chose, and
+// "the stored number happens to equal a new default" is not evidence that it is untuned. So nothing is
+// rewritten here: every look key of this build defaults to the same number as the previous build's
+// (0.4.18 … 0.4.22 retuned the shader and the layout, not the preference defaults), which leaves no
+// stale default to move and no reason to write at all.
+//
+// A future build that does change a default migrates that single key the only safe way: read it, compare
+// it with the default it used to have, and rewrite it only when it still holds exactly that old default.
+// Anything else is the user's look and is kept verbatim.
+static void LGMigratePrefs(void) {
+    CFStringRef domain = CFSTR("com.xenon.ios26ccstyle");
+    int stored = 0;
+    CFPropertyListRef v = CopyPref(@"prefsSchema");
+    if (v) {
+        if (CFGetTypeID(v) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)v, kCFNumberIntType, &stored);
+        CFRelease(v);
+    }
+    if (stored == kPrefsSchema) return;
+    CFPreferencesSetAppValue(CFSTR("prefsSchema"), (__bridge CFPropertyListRef)@(kPrefsSchema), domain);
+    CFPreferencesAppSynchronize(domain);
+    LGWriteDiagnostic(@"ios26ccstyle-migrated.txt",
+        [NSString stringWithFormat:@"look schema %d -> %d: stored look values were left exactly as they are\n"
+                                   @"(no default changed between the two schemas), switches and behaviour\n"
+                                   @"settings were never touched by a migration.\n", stored, kPrefsSchema]);
+}
+
+// MARK: - Calibration ----------------------------------------------------------
+// "Does this match the reference?" used to mean a screenshot and a guess. With the calibration switch on,
+// the Control Center window is drawn once into a small bitmap per page open, and the mean colour of a tile
+// and of the page around it are written side by side: a build is then compared as numbers ("the tile is
+// 6/255 darker than the page") instead of by feel.
+static BOOL LGMeanOfRect(const unsigned char *pixels, size_t width, size_t height,
+                         CGSize windowSize, CGRect rect, double out[3]) {
+    if (!pixels || width == 0 || height == 0 || windowSize.width < 1.0 || windowSize.height < 1.0) return NO;
+    double sx = (double)width / windowSize.width, sy = (double)height / windowSize.height;
+    long x0 = (long)floor(rect.origin.x * sx), x1 = (long)ceil(CGRectGetMaxX(rect) * sx) - 1;
+    long y0 = (long)floor(rect.origin.y * sy), y1 = (long)ceil(CGRectGetMaxY(rect) * sy) - 1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > (long)width - 1) x1 = (long)width - 1;
+    if (y1 > (long)height - 1) y1 = (long)height - 1;
+    if (x1 < x0 || y1 < y0) return NO;
+    double sum[3] = { 0, 0, 0 };
+    long count = 0;
+    for (long y = y0; y <= y1; y++) {
+        for (long x = x0; x <= x1; x++) {
+            const unsigned char *p = pixels + ((size_t)y * width + (size_t)x) * 4;
+            for (int c = 0; c < 3; c++) sum[c] += p[c];
+            count++;
+        }
+    }
+    if (!count) return NO;
+    for (int c = 0; c < 3; c++) out[c] = sum[c] / (double)count;
+    return YES;
+}
+
+static void LGCalibrate(UIView *v, CGFloat radius) {
+    if (!gCalibrate || !v.window) return;
+    static CFTimeInterval last;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - last < 1.5) return;   // one sample per page open, not one per layout pass
+    last = now;
+    __weak UIView *weak = v;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIView *tile = weak;
+        UIView *window = tile.window;
+        if (!tile || !window) return;
+        CGSize ws = window.bounds.size;
+        if (ws.width < 10.0 || ws.height < 10.0) return;
+        size_t width = 64;
+        size_t height = (size_t)MAX(8.0, llround(64.0 * ws.height / ws.width));
+        unsigned char *pixels = calloc(width * height * 4, 1);
+        if (!pixels) return;
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+        CGContextRef context = CGBitmapContextCreate(pixels, width, height, 8, width * 4, space,
+                                                    kCGImageAlphaNoneSkipLast | kCGBitmapByteOrder32Big);
+        CGColorSpaceRelease(space);
+        if (!context) { free(pixels); return; }
+        UIGraphicsPushContext(context);
+        CGContextScaleCTM(context, (CGFloat)width / ws.width, (CGFloat)height / ws.height);
+        [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:NO];
+        UIGraphicsPopContext();
+        CGContextRelease(context);
+
+        CGRect r = [tile convertRect:tile.bounds toView:window];
+        r.origin.y = ws.height - CGRectGetMaxY(r);   // the bitmap context is bottom-up
+        double tileMean[3] = { 0, 0, 0 }, pageMean[3] = { 0, 0, 0 };
+        BOOL haveTile = LGMeanOfRect(pixels, width, height, ws, r, tileMean);
+        BOOL havePage = LGMeanOfRect(pixels, width, height, ws, window.bounds, pageMean);
+        free(pixels);
+        if (!haveTile || !havePage) return;
+        static NSMutableString *report;   // touched on the main queue only
+        if (!report) report = [NSMutableString string];
+        [report appendFormat:@"%s %.0fx%.0f r=%.1f tile=%d,%d,%d page=%d,%d,%d delta=%+d,%+d,%+d\n",
+            class_getName(tile.class), r.size.width, r.size.height, radius,
+            (int)lround(tileMean[0]), (int)lround(tileMean[1]), (int)lround(tileMean[2]),
+            (int)lround(pageMean[0]), (int)lround(pageMean[1]), (int)lround(pageMean[2]),
+            (int)lround(tileMean[0] - pageMean[0]), (int)lround(tileMean[1] - pageMean[1]),
+            (int)lround(tileMean[2] - pageMean[2])];
+        if (report.length > 60000) [report deleteCharactersInRange:NSMakeRange(0, 30000)];
+        LGWriteDiagnostic(@"ios26ccstyle-calibrate.txt", report);
     });
 }
 
@@ -620,6 +754,11 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     BOOL wantStreak = !lowPower && gReflect > 0.001;
     BOOL wantShade  = circle && !lowPower;
 
+    // Increase Contrast: the rim, the sheen and the darkened edge are low-contrast by design, so on this
+    // setting the same look is redrawn with its edges pushed up, which keeps the tile boundary visible.
+    BOOL contrast = IncreaseContrastOn();
+    if (contrast) wantEdges = YES;
+
     CGFloat cap = MAX(1.0, MIN(ceil(radius) + 2.0, floor(shortSide / 2.0)));
     CGFloat scale = v.window.screen.scale > 0 ? v.window.screen.scale : UIScreen.mainScreen.scale;
 
@@ -651,8 +790,8 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
     }
 
     // style: only when a setting, the appearance or the corner shape changed
-    NSString *sig = [NSString stringWithFormat:@"%lu|%d|%d|%.0f|%.1f",
-                     (unsigned long)gGeneration, dark, circle, cap, radius];
+    NSString *sig = [NSString stringWithFormat:@"%lu|%d|%d|%.0f|%.1f|%d",
+                     (unsigned long)gGeneration, dark, circle, cap, radius, contrast];
     if (![objc_getAssociatedObject(v, kSigKey) isEqualToString:sig]) {
         objc_setAssociatedObject(v, kSigKey, sig, OBJC_ASSOCIATION_COPY_NONATOMIC);
 
@@ -671,11 +810,11 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
             shade.colors = @[
                 (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.0].CGColor,
                 (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.0].CGColor,
-                (__bridge id)[UIColor colorWithWhite:0.0 alpha:dark ? 0.20 : 0.09].CGColor,
+                (__bridge id)[UIColor colorWithWhite:0.0 alpha:(dark ? 0.20 : 0.09) * (contrast ? 1.5 : 1.0)].CGColor,
             ];
         }
         if (wantSheen) {
-            CGFloat a = MIN(0.3, gSheen * rs * (dark ? 0.8 : 1.3));
+            CGFloat a = MIN(0.3, gSheen * rs * (dark ? 0.8 : 1.3) * (contrast ? 1.6 : 1.0));
             sheen.startPoint = CGPointMake(0.5, 0.0);
             sheen.endPoint = CGPointMake(0.5, 1.0);
             sheen.locations = @[@0.0, @0.45, @1.0];
@@ -686,7 +825,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
             ];
         }
         if (wantStreak) {
-            CGFloat a = MIN(0.30, (dark ? 0.05 : 0.14) * rs);
+            CGFloat a = MIN(0.30, (dark ? 0.05 : 0.14) * rs * (contrast ? 1.4 : 1.0));
             CGColorRef clear = [UIColor colorWithWhite:1.0 alpha:0.0].CGColor;
             streak.startPoint = CGPointMake(0.0, 0.0);
             streak.endPoint = CGPointMake(1.0, 1.0);
@@ -696,7 +835,7 @@ static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
                               (__bridge id)clear, (__bridge id)clear];
         }
         if (wantHot) {
-            CGFloat a = MIN(0.7, gHot * (dark ? 1.8 : 2.5) * rs * (circle ? 1.7 : 1.0));
+            CGFloat a = MIN(0.7, gHot * (dark ? 1.8 : 2.5) * rs * (circle ? 1.7 : 1.0) * (contrast ? 1.3 : 1.0));
             NSArray *cols = @[(__bridge id)[UIColor colorWithWhite:1.0 alpha:a].CGColor,
                               (__bridge id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
             hotTL.locations = @[@0.0, @1.0];
@@ -1005,6 +1144,8 @@ static BOOL gGlassObserverSet;
     NSInteger _lastStep;
     NSString *_attachedType;
     NSString *_group;
+    BOOL _syncingGeometry;    // re-entrancy guard: this view must never lay itself out twice in one pass
+    CGFloat _followedRadius;  // the host radius this glass last adopted (0 = never followed one)
 }
 
 + (Class)layerClass { return NSClassFromString(@"CABackdropLayer") ?: [CALayer class]; }
@@ -1074,6 +1215,55 @@ static BOOL gGlassObserverSet;
     [self attachFilter];
 }
 
+// The glass is built for the size and corner radius its host had on the pass that created it, and both
+// are snapshots after that: a tile that expands, rotates or re-rounds kept the old frame and the old
+// radius (the r=33.2 glass on a 38.0 container). This keeps them current without taking the host over:
+//
+//   * bounds + center, not frame, so a transform on either view is left alone;
+//   * implicit animations off, so a correction is never seen as an animation;
+//   * a real difference only (> 0.5 pt), so subpixel layout churn is not "fixed" every pass;
+//   * a radius only from a host that actually rounds, and only while the glass is still at the radius it
+//     last followed — the moment the caller sets its own radius, this stops following it;
+//   * never recursively, and the backdrop filter is rebuilt after the transaction, not inside it.
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    if (_syncingGeometry) return;
+    UIView *host = self.superview;
+    if (!host || host == self) return;
+    CGRect target = host.bounds;
+    if (target.size.width < 1.0 || target.size.height < 1.0) return;
+
+    BOOL resized = fabs(self.bounds.size.width - target.size.width) > 0.5 ||
+                   fabs(self.bounds.size.height - target.size.height) > 0.5 ||
+                   fabs(self.center.x - CGRectGetMidX(target)) > 0.5 ||
+                   fabs(self.center.y - CGRectGetMidY(target)) > 0.5;
+
+    CGFloat hostRadius = host.layer.cornerRadius;
+    CGFloat radius = MIN(hostRadius, MIN(target.size.width, target.size.height) / 2.0);
+    BOOL follows = hostRadius > 0.5 &&
+                   (_followedRadius < 0.5 || fabs(self.glassRadius - _followedRadius) < 0.5) &&
+                   fabs(radius - self.glassRadius) > 0.5;
+    if (!resized && !follows) return;
+
+    _syncingGeometry = YES;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    if (resized) {
+        self.bounds = CGRectMake(0.0, 0.0, target.size.width, target.size.height);
+        self.center = CGPointMake(CGRectGetMidX(target), CGRectGetMidY(target));
+    }
+    if (follows) {
+        _followedRadius = radius;
+        self.glassRadius = radius;
+        self.layer.cornerCurve = host.layer.cornerCurve;
+        self.layer.cornerRadius = radius;
+        self.layer.masksToBounds = YES;
+    }
+    [CATransaction commit];
+    _syncingGeometry = NO;
+    if (follows) [self attachFilter];
+}
+
 @end
 
 static void GlassParametersReloaded(CFNotificationCenterRef c, void *o, CFStringRef n,
@@ -1112,7 +1302,7 @@ static void SyncGlassIn(UIView *root, BOOL want, CGFloat radius, BOOL dark, int 
             // A page-high material is the backdrop the tiles of a page sit on, not a tile: glass on it is the
             // extra pane behind the connectivity tiles. The tiles carry their own glass.
             CGFloat wh = root.window ? root.window.bounds.size.height : 0.0;
-            if (want && wh > 1.0 && s.bounds.size.height > wh * 0.7) {
+            if (want && lgIsPageHigh(s.bounds.size.height, wh)) {
                 RemoveGlass(s);
                 if (!s.hidden) s.hidden = YES;
                 objc_setAssociatedObject(s, kPageHidKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -1223,18 +1413,33 @@ static void SyncPanelGlass(UIView *v, CGFloat radius, BOOL dark, BOOL want) {
     HideInnerGlass(v, pg, YES, 0);
 }
 
+// Class names are asked for on every pass of every tile and the answer for a class never changes, so the
+// answer is computed once per class instead of building an NSString for every view, every layout pass.
+static BOOL LGIsSliderClass(Class cls) {
+    static NSMutableDictionary<NSString *, NSNumber *> *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSMutableDictionary dictionary]; });
+    NSString *name = NSStringFromClass(cls);
+    if (!name) return NO;
+    NSNumber *hit = cache[name];
+    if (hit) return hit.boolValue;
+    BOOL slider = [name containsString:@"SliderView"];
+    cache[name] = @(slider);
+    return slider;
+}
+
 // Some tiles have no material of their own (Flashlight and the other controls on a shared page), and the
 // slider track is a plain dark view: both stayed black with no tint. They get a glass of their own at the
 // bottom of the view, with the same veil as every other tile.
 static BOOL OwnsItsLook(UIView *v) {
-    return objc_getAssociatedObject(v, kOwnGlassKey) != nil || [NSStringFromClass(v.class) containsString:@"SliderView"];
+    return objc_getAssociatedObject(v, kOwnGlassKey) != nil || LGIsSliderClass(v.class);
 }
 
 // The module around a slider has the slider's shape; its rim would be a second one.
 static BOOL HoldsSliderOfSameShape(UIView *v, int depth) {
     if (depth > 2) return NO;
     for (UIView *s in v.subviews) {
-        if ([NSStringFromClass(s.class) containsString:@"SliderView"]) {
+        if (LGIsSliderClass(s.class)) {
             CGRect r = [v convertRect:s.bounds fromView:s];
             if (fabs(r.size.width - v.bounds.size.width) <= 16.0 && fabs(r.size.height - v.bounds.size.height) <= 16.0) return YES;
         }
@@ -1589,7 +1794,7 @@ static void ChainLine(NSMutableString *out, UIView *v, int indent, UIView *mark)
 static void DumpTileChain(UIView *tile) {
     if (!gDebugDump) return;
     NSString *tag = nil;
-    if ([NSStringFromClass(tile.class) containsString:@"SliderView"]) tag = @"slider";
+    if (LGIsSliderClass(tile.class)) tag = @"slider";
     else {
         UILabel *lab = FirstLabel(tile, 0);
         if (lab && ([lab.text isEqualToString:@"Wi-Fi"] || [lab.text isEqualToString:@"Flashlight"])) tag = lab.text;
@@ -1907,7 +2112,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     // stock. That is how a wrong-looking tile gets bisected on the phone.
     BOOL decorOn = gIsoDecor && !opaque;
     // the page-high container behind a page of tiles has no rim: each tile draws its own
-    if ((kind == CCKindContainer || kind == CCKindModuleFill) && v.window && b.size.height > v.window.bounds.size.height * 0.7) decorOn = NO;
+    if ((kind == CCKindContainer || kind == CCKindModuleFill) && v.window && lgIsPageHigh(b.size.height, v.window.bounds.size.height)) decorOn = NO;
     if (kind == CCKindSlider) { DumpViewOnce(v, r, "slider"); DumpTileChain(v); }
     if ((kind == CCKindContainer || kind == CCKindModuleFill) && HoldsSliderOfSameShape(v, 0)) decorOn = NO;
     if (decorOn) ApplyDecor(v, b, r);
@@ -1918,6 +2123,7 @@ static void ApplyStyle(UIView *v, CCKind kind) {
 
     if (kind == CCKindContainer) { DecorateMenus(v); DumpExpanded(v); }
     ReportStyle(v, profile, r, glassOn, decorOn);
+    LGCalibrate(v, r);
     PerfAdd("style", PerfNowMS() - perfStart);
 }
 
@@ -1952,11 +2158,21 @@ static void ScheduleReapply(UIView *v, CCKind kind) {
 
 // MARK: - Hooks ---------------------------------------------------------------
 
+// Which hooks installed and which did not, with the reason. A tile that never changes is very often a
+// hook that never landed, and finding that out from a view dump costs hours; the report says it outright
+// and lands next to the other diagnostics at launch (ios26ccstyle-hooks.txt).
+static NSMutableString *gHookReport;   // written from the constructor, main thread only
+
+static void LGRecordHook(const char *className, const char *selName, const char *state) {
+    if (!gHookReport) gHookReport = [NSMutableString string];
+    [gHookReport appendFormat:@"%s %s %s\n", className, selName, state];
+}
+
 static BOOL InstallHook(const char *className, SEL sel, IMP replacement, IMP *original) {
     Class cls = objc_getClass(className);
-    if (!cls) return NO;
+    if (!cls) { LGRecordHook(className, sel_getName(sel), "missing class"); return NO; }
     Method m = class_getInstanceMethod(cls, sel);
-    if (!m) return NO;
+    if (!m) { LGRecordHook(className, sel_getName(sel), "missing selector"); return NO; }
 
     IMP orig = method_getImplementation(m);
     if (!class_addMethod(cls, sel, replacement, method_getTypeEncoding(m))) {
@@ -1964,6 +2180,7 @@ static BOOL InstallHook(const char *className, SEL sel, IMP replacement, IMP *or
         orig = method_setImplementation(m, replacement);
     }
     *original = orig;
+    LGRecordHook(className, sel_getName(sel), orig ? "ok" : "no original");
     return orig != NULL;
 }
 
@@ -3119,29 +3336,39 @@ static void WriteCompatibilityReport(void) {
 
 // MARK: - Crash-loop guard ---------------------------------------------------
 // A constructor runs again every time SpringBoard restarts, so a build that kills SpringBoard loops the
-// device straight into safe mode. Four starts inside 90 s is not a respring, it is a loop: the tweak then
-// stays out of the way for that boot (stock Control Center, no hooks) and says why in
-// ios26ccstyle-guard.txt. The counter clears itself once a boot has stayed up.
+// device straight into safe mode. Four starts inside 90 s is not a respring, it is a loop; instead of
+// going straight to stock, the ladder (common/LGLogic.h) spends one boot bisecting: the decor stays and
+// the Metal renderer — the half a screenshot does not need — is left out. A loop that survives that is
+// not this tweak's decoration, so the next level is stock and no hooks. The counter clears itself once a
+// boot has stayed up.
 static NSString *const kBootStateName = @"ios26ccstyle-crashloop.state";
 
-static BOOL LGBootIsCrashLoop(void) {
+static int LGBootGuardLevel(void) {
     NSString *path = [LGDiagnosticsDirectory() stringByAppendingPathComponent:kBootStateName];
     NSArray *parts = [[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil]
                          componentsSeparatedByString:@" "];
     long count = 0;
     double when = 0;
-    if (parts.count == 2) { count = (long)[parts[0] longLongValue]; when = [parts[1] doubleValue]; }
+    if (parts.count >= 2) { count = (long)[parts[0] longLongValue]; when = [parts[1] doubleValue]; }
     time_t now = time(NULL);
     BOOL recent = when > 0 && (double)now - when < 90.0;
     count = recent ? count + 1 : 1;
-    [[NSString stringWithFormat:@"%ld %ld", count, (long)now] writeToFile:path atomically:YES
-                                                               encoding:NSUTF8StringEncoding error:nil];
-    if (count < 4) return NO;
-    LGWriteDiagnostic(@"ios26ccstyle-guard.txt",
-        [NSString stringWithFormat:@"SpringBoard came back %ld times in under 90 s after this build was loaded,\n"
-                                   @"so the tweak is off for this boot: no hooks, stock Control Center.\n"
-                                   @"Nothing is changed on disk. A boot that stays up removes this lockout.\n", count]);
-    return YES;
+    int level = lgCrashLoopLevel(count);
+    [[NSString stringWithFormat:@"%ld %ld %d", count, (long)now, level] writeToFile:path atomically:YES
+                                                                          encoding:NSUTF8StringEncoding error:nil];
+    if (level == 2) {
+        LGWriteDiagnostic(@"ios26ccstyle-guard.txt",
+            [NSString stringWithFormat:@"SpringBoard came back %ld times in under 90 s even with the renderer left out,\n"
+                                       @"so the tweak is off for this boot: no hooks, stock Control Center.\n"
+                                       @"Nothing is changed on disk. A boot that stays up removes this lockout.\n", count]);
+    } else if (level == 1) {
+        LGWriteDiagnostic(@"ios26ccstyle-guard.txt",
+            [NSString stringWithFormat:@"SpringBoard came back %ld times in under 90 s. This boot keeps the decor\n"
+                                       @"and leaves the renderer out, so the glass is not in the way of a diagnosis.\n"
+                                       @"If this boot stays up, the renderer was the crash; if it loops again, the\n"
+                                       @"next boot is stock.\n", count]);
+    }
+    return level;
 }
 
 __attribute__((constructor))
@@ -3157,11 +3384,14 @@ static void IOS26CCStyleInit(void) {
             return;
         }
         LGLaunchStep("boot guard");
-        if (LGBootIsCrashLoop()) {
+        int guardLevel = LGBootGuardLevel();
+        if (guardLevel >= 2) {
             LGLaunchStep("crash-loop lockout: no hooks this boot");
             LGLaunchEnd();
             return;
         }
+        gBisectGlassOff = (guardLevel == 1);
+        if (gBisectGlassOff) LGLaunchStep("crash-loop: decor only, renderer glass off this boot");
 
         LGLaunchStep("prune logs");
         PruneOldLogs();
@@ -3254,6 +3484,9 @@ static void IOS26CCStyleInit(void) {
         InstallHook("CCUIIconScrollView", @selector(layoutSubviews), (IMP)new_sv_ls, (IMP *)&orig_sv_ls);
         LGLaunchStep("hook CCUIIconScrollView notifyDidScroll");
         InstallHook("CCUIIconScrollView", NSSelectorFromString(@"_notifyDidScroll"), (IMP)new_sv_nds, (IMP *)&orig_sv_nds);
+
+        LGLaunchStep("hook report");
+        LGWriteDiagnostic(@"ios26ccstyle-hooks.txt", gHookReport);
 
         LGLaunchStep("prefs notification");
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,

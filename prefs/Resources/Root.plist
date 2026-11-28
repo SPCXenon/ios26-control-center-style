@@ -876,6 +876,32 @@
 		</dict>
 		<dict>
 			<key>action</key>
+			<string>collectLogs</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Share all logs (one file)</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>copyFingerprint</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Copy build fingerprint</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>clearLogs</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>isDestructive</key>
+			<true/>
+			<key>label</key>
+			<string>Delete logs</string>
+		</dict>
+		<dict>
+			<key>action</key>
 			<string>resetDefaults</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
@@ -1084,7 +1110,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>On by default. Everything is written to /var/mobile/Library/Logs/IOS26CCStyle: style report (ios26ccstyle-style.txt), frame times (ios26ccstyle-perf.txt), compatibility (ios26ccstyle-compat.txt), view dumps, and the renderer log xenonglass.log. The isolation switches draw only one layer of the look, so a wrong tile can be narrowed down on the phone.</string>
+			<string>On by default. Everything is written to /var/mobile/Library/Logs/IOS26CCStyle: style report (ios26ccstyle-style.txt), frame times (ios26ccstyle-perf.txt), compatibility (ios26ccstyle-compat.txt), hook report (ios26ccstyle-hooks.txt), view dumps, and the renderer log xenonglass.log. “Share all logs” puts every file into one document for AirDrop, which is what a bug report needs. The isolation switches draw only one layer of the look, so a wrong tile can be narrowed down on the phone.</string>
 			<key>label</key>
 			<string>Diagnostics</string>
 		</dict>
@@ -1101,6 +1127,20 @@
 			<string>debugDump</string>
 			<key>label</key>
 			<string>Write view dump</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.xenon.ios26ccstyle/reload</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.xenon.ios26ccstyle</string>
+			<key>key</key>
+			<string>debugCalibrate</string>
+			<key>label</key>
+			<string>Tile/page colour calibration</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>

@@ -1,7 +1,51 @@
 # Changelog
 
-Package version stays **0.4.17** until explicitly bumped; everything below is on branch
+Package version stays **0.4.22** until explicitly bumped; everything below is on branch
 `liquid-glass-0.5.0`.
+
+## Xperimental — diagnostics that close their own loop
+
+### Report in one step
+
+**Share all logs (one file)**, **Copy build fingerprint** and **Delete logs** live next to *View logs*:
+the whole log directory becomes one document in the share sheet (AirDrop, Files, mail), so a report is
+complete instead of hand-copied, carries its build (version, device, iOS, log list) and is trimmed on the
+phone afterwards. The viewer reads the same list as the archive, so the two cannot drift.
+
+Every file in the directory is now bounded: the style/perf/dump writer rotates at 512 KB (keeping one
+`.1` for a before/after) and so does the renderer log, which until now grew for as long as the session ran.
+
+### Unconfirmed crashes are measured, then bisected
+
+The boot guard used to give up on the second bad boot and go stock. It is now a ladder: four starts in
+90 s keeps the decor and leaves the Metal renderer out — the half that can kill a boot and the half a
+screenshot does not need — and only a loop that survives that goes stock. The chosen level is written to
+`ios26ccstyle-guard.txt`.
+
+`ios26ccstyle-hooks.txt` records every hook that installed and every one that did not, with the reason,
+so `CCUIControlTemplateView` tiles that never change can be traced to a missing class or selector instead
+of to the drawing code.
+
+### The look is compared as numbers
+
+New switch *Tile/page colour calibration*: once per page open, the Control Center window is drawn into a
+small bitmap and the mean colour of a tile and of the page around it are written side by side to
+`ios26ccstyle-calibrate.txt`. "The tile is 6/255 darker than the page" replaces "looks a bit off".
+
+Related fixes from the same pass:
+
+- the glass lays out with its host, so bounds and corner radius follow a container that expands, rotates
+  or re-rounds (the 33.2 pt glass on a 38.0 pt tile) — and it does so conservatively: bounds and center
+  rather than frame so a transform is left alone, implicit animations disabled, a 0.5 pt threshold, a
+  re-entrancy guard, and it stops following a radius as soon as the caller sets one of its own;
+- `prefsSchema` stamps the look schema but rewrites nothing: no default changed between the two schemas,
+  so there is nothing to move, and a value the user tuned is never overwritten;
+- Increase Contrast raises the rim, sheen, streak and edge of the same look instead of changing it;
+- class-derived predicates (slider, exact material) are cached per class, removing a string build from
+  every layout pass;
+- `common/LGLogic.h` holds the heuristics that need no UIKit, and `tests/test_logic.c` proves them in CI;
+- Theos and the SDK are pinned and cached, a `v*` tag produces a GitHub release with the `.deb`, and
+  `ARCHITECTURE.md` records the Control Center model and the diagnostics map.
 
 ### Launch crash (safe mode before Control Center opens)
 

@@ -307,6 +307,14 @@ extern "C" void LGDiagAppend(const char *text) {
     char *copy = strdup(text);
     if (!copy) return;
     dispatch_async(lgLogQueue(), ^{
+        // A renderer log that grows all session is unreadable on the phone and crowds /var/mobile.
+        // Half a megabyte, then one rotation keeps the previous file for a before/after.
+        struct stat info;
+        if (stat(LG_LOG_PATH, &info) == 0 && info.st_size > 512 * 1024) {
+            char rotated[PATH_MAX] = {};
+            snprintf(rotated, sizeof(rotated), "%s.1", LG_LOG_PATH);   // rename replaces the old rotation
+            rename(LG_LOG_PATH, rotated);
+        }
         FILE *f = fopen(LG_LOG_PATH, "a");
         if (f) { fputs(copy, f); fputc('\n', f); fclose(f); }
         free(copy);
