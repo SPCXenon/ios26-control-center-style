@@ -1,4 +1,4 @@
-// IOS26CCStyle 0.4.21
+// IOS26CCStyle 0.4.22
 // iOS 26 "Liquid Glass" look for the iOS 18 Control Center.
 // Target: iOS 18.x · rootless (Dopamine / ElleKit) · arm64e · SpringBoard only.
 //
@@ -23,7 +23,7 @@
 
 static NSString *const kPrefsDomain = @"com.xenon.ios26ccstyle";
 static NSString *const kReloadNotification = @"com.xenon.ios26ccstyle/reload";
-#define XC_VERSION "0.4.21"
+#define XC_VERSION "0.4.22"
 
 // MARK: - Preferences ---------------------------------------------------------
 
@@ -602,8 +602,10 @@ static BOOL SameShapeAncestorDecorated(UIView *v, CGRect b) {
     return NO;
 }
 
+// A slider, or a tile that carries a glass of its own, draws its own rim whatever sits above it.
+static BOOL OwnsItsLook(UIView *v);
 static void ApplyDecor(UIView *v, CGRect b, CGFloat radius) {
-    if (SameShapeAncestorDecorated(v, b)) { HideDecor(v); return; }
+    if (!OwnsItsLook(v) && SameShapeAncestorDecorated(v, b)) { HideDecor(v); return; }
     BOOL dark = IsDarkUI(v);
     CGFloat shortSide = MIN(b.size.width, b.size.height);
     BOOL circle = fabs(b.size.width - b.size.height) < 2.0 && radius >= shortSide / 2.0 - 0.5;
@@ -1224,6 +1226,23 @@ static void SyncPanelGlass(UIView *v, CGFloat radius, BOOL dark, BOOL want) {
 // Some tiles have no material of their own (Flashlight and the other controls on a shared page), and the
 // slider track is a plain dark view: both stayed black with no tint. They get a glass of their own at the
 // bottom of the view, with the same veil as every other tile.
+static BOOL OwnsItsLook(UIView *v) {
+    return objc_getAssociatedObject(v, kOwnGlassKey) != nil || [NSStringFromClass(v.class) containsString:@"SliderView"];
+}
+
+// The module around a slider has the slider's shape; its rim would be a second one.
+static BOOL HoldsSliderOfSameShape(UIView *v, int depth) {
+    if (depth > 2) return NO;
+    for (UIView *s in v.subviews) {
+        if ([NSStringFromClass(s.class) containsString:@"SliderView"]) {
+            CGRect r = [v convertRect:s.bounds fromView:s];
+            if (fabs(r.size.width - v.bounds.size.width) <= 16.0 && fabs(r.size.height - v.bounds.size.height) <= 16.0) return YES;
+        }
+        if (HoldsSliderOfSameShape(s, depth + 1)) return YES;
+    }
+    return NO;
+}
+
 static BOOL SubtreeHasGlass(UIView *root, UIView *skip, int depth) {
     if (depth > 2) return NO;
     for (UIView *s in root.subviews) {
@@ -1558,20 +1577,37 @@ static void ChainLine(NSMutableString *out, UIView *v, int indent, UIView *mark)
      NSStringFromClass(v.class), NSStringFromCGRect(v.frame), v.alpha, v.hidden, l.zPosition, l.opacity,
      fl, l.masksToBounds, objc_getAssociatedObject(v, kGlassKey) ? @" [has-glass]" : @"",
      [v isKindOfClass:XCGlassView.class] ? @" [GLASS]" : @""];
+    CALayer *e = objc_getAssociatedObject(v, kEdgesKey);
+    CGFloat bw = 0, ba = 0;
+    UIColor *bc = v.backgroundColor;
+    BOOL hasBg = bc && [bc getWhite:&bw alpha:&ba];
+    [out appendFormat:@"%*s  r=%.1f rim=%@ bg=%@ own-glass=%d\n", indent * 2, "", l.cornerRadius,
+     e ? (e.hidden ? @"hidden" : @"on") : @"none", hasBg ? [NSString stringWithFormat:@"w%.2f a%.2f", bw, ba] : @"-",
+     objc_getAssociatedObject(v, kOwnGlassKey) ? 1 : 0];
 }
 
 static void DumpTileChain(UIView *tile) {
     if (!gDebugDump) return;
-    UILabel *lab = FirstLabel(tile, 0);
-    if (!lab || ![lab.text isEqualToString:@"Wi-Fi"]) return;
-    static NSMutableString *acc; static int n; static CFTimeInterval last;
+    NSString *tag = nil;
+    if ([NSStringFromClass(tile.class) containsString:@"SliderView"]) tag = @"slider";
+    else {
+        UILabel *lab = FirstLabel(tile, 0);
+        if (lab && ([lab.text isEqualToString:@"Wi-Fi"] || [lab.text isEqualToString:@"Flashlight"])) tag = lab.text;
+    }
+    if (!tag) return;
+    // one buffer per subject, all written to the same file
+    static NSMutableDictionary<NSString *, NSMutableString *> *bufs;
+    static NSMutableDictionary<NSString *, NSNumber *> *counts, *lasts;
+    if (!bufs) { bufs = [NSMutableDictionary dictionary]; counts = [NSMutableDictionary dictionary]; lasts = [NSMutableDictionary dictionary]; }
     CFTimeInterval now = CACurrentMediaTime();
-    if (now - last < 1.5) return;   // one snapshot per page open, not one per animation frame
-    last = now;
-    if (!acc) acc = [NSMutableString string];
-    if (n >= 8) { n = 0; [acc setString:@""]; }
-    n++;
-    [acc appendFormat:@"--- snapshot %d %.1f\n", n, CACurrentMediaTime()];
+    if (now - lasts[tag].doubleValue < 1.5) return;   // one snapshot per page open, not one per animation frame
+    lasts[tag] = @(now);
+    NSMutableString *acc = bufs[tag];
+    if (!acc) { acc = [NSMutableString string]; bufs[tag] = acc; }
+    int n = counts[tag].intValue;
+    if (n >= 4) { n = 0; [acc setString:@""]; }
+    counts[tag] = @(++n);
+    [acc appendFormat:@"--- %@ snapshot %d %.1f\n", tag, n, now];
     UIView *top = tile;
     for (int i = 0; i < 4 && top.superview; i++) top = top.superview;
     // ancestors with their children, one level down
@@ -1583,7 +1619,9 @@ static void DumpTileChain(UIView *tile) {
         if (i == 0) { for (UIView *s in c.subviews) ChainLine(acc, s, (int)chain.count, tile); }
         else { for (UIView *s in c.subviews) if (s != chain[i - 1]) ChainLine(acc, s, (int)(chain.count - i), tile); }
     }
-    LGWriteDiagnostic(@"ios26ccstyle-tile-chain.txt", acc);
+    NSMutableString *all = [NSMutableString string];
+    for (NSString *k in [bufs.allKeys sortedArrayUsingSelector:@selector(compare:)]) [all appendString:bufs[k]];
+    LGWriteDiagnostic(@"ios26ccstyle-tile-chain.txt", all);
 }
 
 // MARK: Edit mode ------------------------------------------------------------
@@ -1870,7 +1908,8 @@ static void ApplyStyle(UIView *v, CCKind kind) {
     BOOL decorOn = gIsoDecor && !opaque;
     // the page-high container behind a page of tiles has no rim: each tile draws its own
     if ((kind == CCKindContainer || kind == CCKindModuleFill) && v.window && b.size.height > v.window.bounds.size.height * 0.7) decorOn = NO;
-    if (kind == CCKindSlider) DumpViewOnce(v, r, "slider");
+    if (kind == CCKindSlider) { DumpViewOnce(v, r, "slider"); DumpTileChain(v); }
+    if ((kind == CCKindContainer || kind == CCKindModuleFill) && HoldsSliderOfSameShape(v, 0)) decorOn = NO;
     if (decorOn) ApplyDecor(v, b, r);
     else HideDecor(v);
 

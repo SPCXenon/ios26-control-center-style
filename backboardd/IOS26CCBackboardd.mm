@@ -926,7 +926,10 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
     }
 
     if ((R < shortest * 0.45 || subShape) && distFromSide >= bezel) {
-        float4 flat = src.sample(s, captureUV);
+        // The interior of a rounded-square tile takes the same blur and the same lift as the bezel and as
+        // the capsules (which never reach this branch): without it the middle of a 142 pt tile stayed darker
+        // than its rim, which is the step ten points in from the edge.
+        float4 flat = glassSample(src, s, captureUV, u, 12, 0.0);
         flat.rgb = mix(flat.rgb, u.tintColor.rgb, u.tintColor.a);
         return flat;
     }
